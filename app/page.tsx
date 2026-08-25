@@ -10,7 +10,9 @@ import {
   type StoredIdentity,
 } from "../lib/identity";
 import {
+  contributionNotePath,
   createMailbox,
+  didNotePath,
   fingerprint,
   proxyGet,
   publishContribution,
@@ -130,13 +132,14 @@ export default function Home() {
       setStatus("profile", { state: "error", message: "Create a mailbox before publishing the DID profile." });
       return;
     }
+    const path = didNotePath(fp);
     await run(
       "profile",
       "Publishing the DID profile to Technocore…",
-      `Profile published successfully at /kv/did/${fp}.`,
+      `Profile published successfully at ${path}.`,
       async () => {
         await publishProfile(identity, agentName, mailbox);
-        addEvent("Profile published", `/kv/did/${fp}`);
+        addEvent("Profile published", path);
       },
     );
   }
@@ -157,13 +160,14 @@ export default function Home() {
 
   async function handleContribution() {
     if (!identity) return;
+    const path = contributionNotePath(fp);
     await run(
       "contribution",
       "Publishing the contribution proof to Technocore…",
-      `Contribution proof published successfully at /kv/contrib/${fp}.`,
+      `Contribution proof published successfully at ${path}.`,
       async () => {
         await publishContribution(identity, agentName, contributionUrl, contributionSummary);
-        addEvent("Contribution published", `/kv/contrib/${fp}`);
+        addEvent("Contribution published", path);
       },
     );
   }
@@ -255,7 +259,7 @@ export default function Home() {
           <label>Summary<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={3} /></label>
           <button className="primary full" disabled={!identity || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish contribution"}</button>
           <ActionNotice status={statuses.contribution} />
-          {identity && fp && <a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat/kv/contrib/${fp}`}>Open public proof ↗</a>}
+          {identity && fp && <a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open public proof ↗</a>}
         </article>
       </section>
 
