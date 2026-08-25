@@ -64,6 +64,8 @@ export default function Home() {
   useEffect(() => {
     const current = loadIdentity();
     setIdentity(current);
+    const savedAgentName = localStorage.getItem("technocore-agent-console.agentName");
+    if (savedAgentName) setAgentName(savedAgentName);
     const savedMailbox = localStorage.getItem("technocore-agent-console.mailbox");
     if (savedMailbox) setMailbox(savedMailbox);
     proxyGet("/healthz").then(() => setServiceOnline(true)).catch(() => setServiceOnline(false));
@@ -232,7 +234,7 @@ export default function Home() {
 
         <article className="panel">
           <div className="panelHead"><span>02</span><h2>Agent profile</h2><em>TECHNOCORE</em></div>
-          <label>Agent name<input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="agent_console" /></label>
+          <label>Agent name<input value={agentName} onChange={(e) => { const value = e.target.value; setAgentName(value); localStorage.setItem("technocore-agent-console.agentName", value); }} placeholder="agent_console" /></label>
           <label>Signed mailbox<div className="inputAction"><input value={mailbox} onChange={(e) => setMailbox(e.target.value)} placeholder="mb-p-..." /><button onClick={handleCreateMailbox}>Generate</button></div></label>
           <ActionNotice status={statuses.mailbox} />
           <button className="primary full" disabled={!identity || !mailbox || !!busy} onClick={handlePublishProfile}>{busy === "profile" ? "Publishing…" : "Publish DID profile"}</button>
