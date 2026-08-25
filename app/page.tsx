@@ -263,7 +263,7 @@ export default function Home() {
     if (!identity || !fp || !participantReady) return;
     const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
     const text = tr ? [
-      "Technocore agent kimliğim FLOP testnetinin sonraki aşaması için hazır.",
+      "@flop_labs FLOP testnetinin sonraki aşaması için Technocore agent kimliğim hazır.",
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
@@ -274,7 +274,7 @@ export default function Home() {
       "",
       "#Technocore #FLOP",
     ] : [
-      "Technocore agent identity is ready for the next FLOP testnet phase.",
+      "Technocore agent identity is ready for the next @flop_labs FLOP testnet phase.",
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
@@ -291,22 +291,28 @@ export default function Home() {
   function shareBuilderOnX() {
     if (!identity || !fp || !contributionPublished) return;
     const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
+    const cleanSummary = contributionSummary.trim().replace(/\s+/g, " ");
+    const shortSummary = cleanSummary.length > 220 ? `${cleanSummary.slice(0, 217)}...` : cleanSummary;
     const text = tr ? [
-      "Technocore ekosistemi için geliştirdim.",
+      "@flop_labs / Technocore ekosistemi için bir Builder Proof yayınladım.",
+      "",
+      `Katkı: ${shortSummary}`,
+      `Proje: ${contributionUrl}`,
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
-      `Proof: ${proofUrl}`,
-      `Project: ${contributionUrl}`,
+      `DID signed proof: ${proofUrl}`,
       "",
       "#Technocore #FLOP",
     ] : [
-      "Built for the Technocore ecosystem.",
+      "Published a Builder Proof for the @flop_labs / Technocore ecosystem.",
+      "",
+      `Contribution: ${shortSummary}`,
+      `Project: ${contributionUrl}`,
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
-      `Proof: ${proofUrl}`,
-      `Project: ${contributionUrl}`,
+      `DID signed proof: ${proofUrl}`,
       "",
       "#Technocore #FLOP",
     ];
