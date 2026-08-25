@@ -79,6 +79,7 @@ export default function Home() {
   const shortDid = useMemo(() => identity ? `${identity.did.slice(0, 20)}…${identity.did.slice(-12)}` : "No identity yet", [identity]);
   const participantReady = statuses.profile?.state === "success" || statuses.message?.state === "success";
   const contributionPublished = statuses.contribution?.state === "success";
+  const builderReady = Boolean(identity && contributionUrl.trim() && contributionSummary.trim());
 
   function addEvent(title: string, detail: string, tone: EventItem["tone"] = "ok") {
     setEvents((items) => [{ id: Date.now() + Math.random(), title, detail, tone }, ...items].slice(0, 8));
@@ -277,6 +278,14 @@ export default function Home() {
         </article>
       </section>
 
+      <section className="traceSection">
+        <article className="panel trace">
+          <div className="panelHead"><span>05</span><h2>Activity trace</h2><em>THIS SESSION</em></div>
+          <p className="muted">Your local session history. This is part of the participant flow and is not a builder requirement.</p>
+          {events.length === 0 ? <div className="empty">No local actions yet. Create an identity to start the trace.</div> : events.map((event) => <div className="event" key={event.id}><i className={event.tone} /><div><strong>{event.title}</strong><small>{event.detail}</small></div></div>)}
+        </article>
+      </section>
+
       <div className="flowIntro builderIntro">
         <div><span>FOR BUILDERS</span><strong>Optional proof for people who built or contributed something</strong></div>
         <p>GitHub is not required for normal users. Builders can attach any public project, PR, app or website they actually contributed to.</p>
@@ -284,10 +293,10 @@ export default function Home() {
 
       <section className="builderGrid">
         <article className="panel builderPanel">
-          <div className="panelHead"><span>05</span><h2>Builder proof</h2><em>OPTIONAL</em></div>
+          <div className="panelHead"><span>06</span><h2>Builder proof</h2><em>OPTIONAL</em></div>
           <label>Public project or contribution URL<input value={contributionUrl} onChange={(e) => { setContributionUrl(e.target.value); setStatus("contribution", { state: "info", message: "This URL will be included in your public builder proof." }); }} placeholder="https://github.com/you/project or https://your-app.com" /></label>
           <label>What did you build or contribute?<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={4} placeholder="Describe your real contribution in one or two sentences." /></label>
-          <button className="primary full" disabled={!identity || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish builder proof"}</button>
+          <button className="primary full" disabled={!builderReady || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish builder proof"}</button>
           <ActionNotice status={statuses.contribution} />
           {identity && fp && contributionPublished && <>
             <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID signed proof ↗</a></div>
@@ -296,9 +305,15 @@ export default function Home() {
           </>}
         </article>
 
-        <article className="panel trace">
-          <div className="panelHead"><span>06</span><h2>Activity trace</h2><em>THIS SESSION</em></div>
-          {events.length === 0 ? <div className="empty">No local actions yet. Create an identity to start the trace.</div> : events.map((event) => <div className="event" key={event.id}><i className={event.tone} /><div><strong>{event.title}</strong><small>{event.detail}</small></div></div>)}
+        <article className="panel builderGuide">
+          <div className="panelHead"><span>INFO</span><h2>What counts as builder proof?</h2><em>PUBLIC WORK</em></div>
+          <p className="muted">Use this only when you have something real and public to point to.</p>
+          <div className="guideRows">
+            <div><strong>Own project</strong><span>Repository or live application you built.</span></div>
+            <div><strong>Contribution</strong><span>Public pull request, commit or other attributable work.</span></div>
+            <div><strong>Website or tool</strong><span>A public product or integration you actually contributed to.</span></div>
+          </div>
+          <p className="muted">If none of these apply, skip the builder section. Your participant identity and signed activity still work normally.</p>
         </article>
       </section>
 
