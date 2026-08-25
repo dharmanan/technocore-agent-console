@@ -38,17 +38,17 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
 
 export async function publishProfile(identity: StoredIdentity, agentName: string, mailbox: string): Promise<string> {
   const agent = cleanName(agentName);
-  const fingerprint = await fingerprint(identity.did);
+  const fingerprintValue = await fingerprint(identity.did);
   const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`, 8192);
-  return proxyGet(`/kv/did/${fingerprint}/set/${encodeURIComponent(value)}`);
+  return proxyGet(`/kv/did/${fingerprintValue}/set/${encodeURIComponent(value)}`);
 }
 
 export async function publishContribution(identity: StoredIdentity, agentName: string, url: string, summary: string): Promise<string> {
   const agent = cleanName(agentName);
-  const fingerprint = await fingerprint(identity.did);
+  const fingerprintValue = await fingerprint(identity.did);
   const cleanUrl = new URL(url).toString();
   const value = cleanLine(`technocore-contribution-v1 did:${identity.did} agent:${agent} type:tool summary:${summary} url:${cleanUrl}`, 8192);
-  return proxyGet(`/kv/contrib/${fingerprint}/set/${encodeURIComponent(value)}`);
+  return proxyGet(`/kv/contrib/${fingerprintValue}/set/${encodeURIComponent(value)}`);
 }
 
 export function createMailbox(): string {
