@@ -68,7 +68,8 @@ export async function publishContribution(identity: StoredIdentity, agentName: s
   const agent = cleanName(agentName);
   const fingerprintValue = await fingerprint(identity.did);
   const cleanUrl = new URL(url).toString();
-  const value = cleanLine(`technocore-contribution-v1 did:${identity.did} agent:${agent} type:tool summary:${summary} url:${cleanUrl}`, 4096);
+  const cleanSummary = cleanLine(summary, 1200);
+  const value = cleanLine(`technocore-builder-proof-v1 did:${identity.did} agent:${agent} summary:${cleanSummary} url:${cleanUrl}`, 4096);
   const noteResult = await proxyGet(`${contributionNotePath(fingerprintValue)}/set/${encodeURIComponent(value)}`);
   await sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
   return noteResult;
