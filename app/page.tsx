@@ -80,6 +80,7 @@ export default function Home() {
   }, [identity]);
 
   const shortDid = useMemo(() => identity ? `${identity.did.slice(0, 20)}…${identity.did.slice(-12)}` : "No identity yet", [identity]);
+  const contributionPublished = statuses.contribution?.state === "success";
 
   function addEvent(title: string, detail: string, tone: EventItem["tone"] = "ok") {
     setEvents((items) => [{ id: Date.now() + Math.random(), title, detail, tone }, ...items].slice(0, 8));
@@ -173,6 +174,24 @@ export default function Home() {
     );
   }
 
+  function handleShareOnX() {
+    if (!identity || !fp || !contributionPublished) return;
+    const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
+    const publishedAgent = agentName.trim().toLowerCase();
+    const text = [
+      "DID-signed Technocore contribution proof.",
+      "",
+      `Agent: ${publishedAgent}`,
+      `DID: ${identity.did}`,
+      `Proof: ${proofUrl}`,
+      `Repo: ${contributionUrl}`,
+      "",
+      "#Technocore #FLOP",
+    ].join("\n");
+    const shareUrl = `https://x.com/intent/post?text=${encodeURIComponent(text)}`;
+    window.open(shareUrl, "_blank", "noopener,noreferrer");
+  }
+
   function handleImport(file: File) {
     setStatus("identity", { state: "pending", message: "Reading the selected identity file…" });
     const reader = new FileReader();
@@ -260,7 +279,11 @@ export default function Home() {
           <label>Summary<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={3} /></label>
           <button className="primary full" disabled={!identity || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish contribution"}</button>
           <ActionNotice status={statuses.contribution} />
-          {identity && fp && <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID-signed proof ↗</a></div>}
+          {identity && fp && contributionPublished && <>
+            <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID-signed proof ↗</a></div>
+            <button className="full" onClick={handleShareOnX}>Share proof on X</button>
+            <p className="muted">Shares only the public DID, agent name, proof and repository URL. Private key and mailbox are never included.</p>
+          </>}
         </article>
       </section>
 
