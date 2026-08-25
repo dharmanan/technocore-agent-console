@@ -15,6 +15,7 @@ import {
   didNotePath,
   fingerprint,
   proxyGet,
+  publicProofPath,
   publishContribution,
   publishProfile,
   sendSignedMessage,
@@ -135,11 +136,11 @@ export default function Home() {
     const path = didNotePath(fp);
     await run(
       "profile",
-      "Publishing the DID profile to Technocore…",
-      `Profile published successfully at ${path}.`,
+      "Publishing the DID profile and DID-signed proof to Technocore…",
+      `Profile indexed at ${path} and backed by a DID-signed public proof.`,
       async () => {
         await publishProfile(identity, agentName, mailbox);
-        addEvent("Profile published", path);
+        addEvent("Profile published", `${path} + signed proof`);
       },
     );
   }
@@ -163,11 +164,11 @@ export default function Home() {
     const path = contributionNotePath(fp);
     await run(
       "contribution",
-      "Publishing the contribution proof to Technocore…",
-      `Contribution proof published successfully at ${path}.`,
+      "Publishing the contribution index and DID-signed proof to Technocore…",
+      `Contribution indexed at ${path} and backed by a DID-signed public proof.`,
       async () => {
         await publishContribution(identity, agentName, contributionUrl, contributionSummary);
-        addEvent("Contribution published", path);
+        addEvent("Contribution published", `${path} + signed proof`);
       },
     );
   }
@@ -259,7 +260,7 @@ export default function Home() {
           <label>Summary<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={3} /></label>
           <button className="primary full" disabled={!identity || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish contribution"}</button>
           <ActionNotice status={statuses.contribution} />
-          {identity && fp && <a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open public proof ↗</a>}
+          {identity && fp && <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID-signed proof ↗</a></div>}
         </article>
       </section>
 
