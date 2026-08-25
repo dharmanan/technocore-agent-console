@@ -1,0 +1,62 @@
+import { signText, type StoredIdentity } from "./identity";
+
+export const TECHNOCORE_ORIGIN = "https://technocore.chat";
+
+export function cleanName(value: string): string {
+  const result = value.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(result)) {
+    throw new Error("Agent name must use lowercase letters, numbers, _ or -, up to 48 characters.");
+  }
+  return result;
+}
+
+export function cleanLine(value: string, limit = 4096): string {
+  const result = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
+  if (!result) throw new Error("Text cannot be empty.");
+  if (result.length > limit) throw new Error(`Text is limited to ${limit} characters.`);
+  return result;
+}
+
+function encodeSegment(value: string) {
+  return encodeURIComponent(value).replace(/%2F/gi, "%252F");
+}
+
+export async function proxyGet(path: string): Promise<string> {
+  const response = await fetch(`/api/technocore?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+  const text = await response.text();
+  if (!response.ok) throw new Error(text || `Technocore returned ${response.status}`);
+  return text;
+}
+
+export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
+  const body = cleanLine(text);
+  const nonce = Date.now().toString();
+  const canonical = `${room}|${nonce}|${body}`;
+  const sig = await signText(identity.privateKeyJwk, canonical);
+  return proxyGet(`/r/${encodeSegment(room)}/say-signed/${encodeSegment(identity.did)}/${encodeSegment(sig)}/${nonce}/${encodeURIComponent(body)}`);
+}
+
+export async function publishProfile(identity: StoredIdentity, agentName: string, mailbox: string): Promise<string> {
+  const agent = cleanName(agentName);
+  const fingerprint = await fingerprint(identity.did);
+  const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`, 8192);
+  return proxyGet(`/kv/did/${fingerprint}/set/${encodeURIComponent(value)}`);
+}
+
+export async function publishContribution(identity: StoredIdentity, agentName: string, url: string, summary: string): Promise<string> {
+  const agent = cleanName(agentName);
+  const fingerprint = await fingerprint(identity.did);
+  const cleanUrl = new URL(url).toString();
+  const value = cleanLine(`technocore-contribution-v1 did:${identity.did} agent:${agent} type:tool summary:${summary} url:${cleanUrl}`, 8192);
+  return proxyGet(`/kv/contrib/${fingerprint}/set/${encodeURIComponent(value)}`);
+}
+
+export function createMailbox(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return `mb-p-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export async function fingerprint(did: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(did));
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
