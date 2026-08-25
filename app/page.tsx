@@ -26,6 +26,8 @@ type ActionKey = "identity" | "mailbox" | "profile" | "message" | "contribution"
 type ActionStatus = { state: "pending" | "success" | "error" | "info"; message: string };
 type Lang = "en" | "tr";
 
+const APP_URL = "https://flop-console.vercel.app/";
+
 function friendlyError(error: unknown, tr: boolean): { raw: string; display: string } {
   const raw = error instanceof Error ? error.message : tr ? "Bilinmeyen hata" : "Unknown error";
   if (raw.includes("note limit reached")) {
@@ -263,25 +265,31 @@ export default function Home() {
     if (!identity || !fp || !participantReady) return;
     const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
     const text = tr ? [
-      "@flop_labs FLOP testnetinin sonraki aşaması için Technocore agent kimliğim hazır.",
+      "FLOP testnet hazırlığımın ilk aşamasını tamamladım.",
+      "",
+      "Technocore üzerinde kendi agent kimliğimi oluşturdum ve DID'imle imzalı ilk aktivitemi yayınladım.",
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
       `Proof: ${proofUrl}`,
       "",
-      "Phase 1: kimlik + imzalı Technocore aktivitesi tamamlandı.",
-      "Phase 2: resmi endpointler açıldığında faucet + FLOP testnet aktivitesi gelecek.",
+      "Sıradaki aşama: @flop_labs resmi faucet ve testnet endpointlerini açtığında aynı DID ile devam etmek.",
+      "",
+      `Console: ${APP_URL}`,
       "",
       "#Technocore #FLOP",
     ] : [
-      "Technocore agent identity is ready for the next @flop_labs FLOP testnet phase.",
+      "Phase 1 of my FLOP testnet preparation is complete.",
+      "",
+      "I created my Technocore agent identity and published my first DID signed activity.",
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
       `Proof: ${proofUrl}`,
       "",
-      "Phase 1: identity + signed Technocore activity complete.",
-      "Phase 2: faucet + FLOP testnet activity coming when official endpoints go live.",
+      "Next: continue with the same DID when @flop_labs opens the official faucet and testnet endpoints.",
+      "",
+      `Console: ${APP_URL}`,
       "",
       "#Technocore #FLOP",
     ];
@@ -294,25 +302,33 @@ export default function Home() {
     const cleanSummary = contributionSummary.trim().replace(/\s+/g, " ");
     const shortSummary = cleanSummary.length > 220 ? `${cleanSummary.slice(0, 217)}...` : cleanSummary;
     const text = tr ? [
-      "@flop_labs / Technocore ekosistemi için bir Builder Proof yayınladım.",
+      "Technocore ekosistemi için geliştirdiğim çalışmayı DID imzalı Builder Proof olarak yayınladım.",
       "",
       `Katkı: ${shortSummary}`,
       `Proje: ${contributionUrl}`,
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
-      `DID signed proof: ${proofUrl}`,
+      `Proof: ${proofUrl}`,
+      "",
+      "Bu çalışma @flop_labs / Technocore ekosistemi için public olarak doğrulanabilir bir contribution proof oluşturuyor.",
+      "",
+      `Console: ${APP_URL}`,
       "",
       "#Technocore #FLOP",
     ] : [
-      "Published a Builder Proof for the @flop_labs / Technocore ecosystem.",
+      "I published my work for the Technocore ecosystem as a DID signed Builder Proof.",
       "",
       `Contribution: ${shortSummary}`,
       `Project: ${contributionUrl}`,
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
-      `DID signed proof: ${proofUrl}`,
+      `Proof: ${proofUrl}`,
+      "",
+      "This creates a publicly verifiable contribution proof for the @flop_labs / Technocore ecosystem.",
+      "",
+      `Console: ${APP_URL}`,
       "",
       "#Technocore #FLOP",
     ];
