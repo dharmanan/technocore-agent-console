@@ -3,7 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Technocore Agent Console",
-  description: "Browser-native DID identity and signed Technocore activity console.",
+  description: "Browser-native DID identity, signed Technocore activity and builder proof console for the future FLOP testnet path.",
+  icons: {
+    icon: "/brand/koray-mark.svg",
+    shortcut: "/brand/koray-mark.svg",
+    apple: "/brand/koray-mark.svg",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
