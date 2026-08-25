@@ -28,13 +28,10 @@ type ActionStatus = { state: "pending" | "success" | "error" | "info"; message: 
 function friendlyError(error: unknown): { raw: string; display: string } {
   const raw = error instanceof Error ? error.message : "Unknown error";
   if (raw.includes("note limit reached")) {
-    return {
-      raw,
-      display: "Technocore note capacity is currently full. Nothing was published. Retry later when capacity is available.",
-    };
+    return { raw, display: "Technocore note capacity is currently full. Nothing was published. Retry later." };
   }
   if (raw.includes("429")) {
-    return { raw, display: "Technocore rate limit reached. Wait for the published retry window, then try again." };
+    return { raw, display: "Technocore rate limit reached. Wait for the retry window, then try again." };
   }
   return { raw, display: raw };
 }
@@ -55,8 +52,8 @@ export default function Home() {
   const [agentName, setAgentName] = useState("agent_console");
   const [mailbox, setMailbox] = useState("");
   const [message, setMessage] = useState("technocore-agent-console online");
-  const [contributionUrl, setContributionUrl] = useState("https://github.com/dharmanan/technocore-agent-console");
-  const [contributionSummary, setContributionSummary] = useState("A browser-native console for Technocore DID identity, signed agent activity and contribution proofs.");
+  const [contributionUrl, setContributionUrl] = useState("");
+  const [contributionSummary, setContributionSummary] = useState("");
   const [events, setEvents] = useState<EventItem[]>([]);
   const [statuses, setStatuses] = useState<Partial<Record<ActionKey, ActionStatus>>>({});
   const [busy, setBusy] = useState<ActionKey | null>(null);
@@ -80,6 +77,7 @@ export default function Home() {
   }, [identity]);
 
   const shortDid = useMemo(() => identity ? `${identity.did.slice(0, 20)}…${identity.did.slice(-12)}` : "No identity yet", [identity]);
+  const participantReady = statuses.profile?.state === "success" || statuses.message?.state === "success";
   const contributionPublished = statuses.contribution?.state === "success";
 
   function addEvent(title: string, detail: string, tone: EventItem["tone"] = "ok") {
@@ -96,28 +94,21 @@ export default function Home() {
     try {
       await action();
       setStatus(key, { state: "success", message: successMessage });
-      return true;
     } catch (error) {
       const detail = friendlyError(error);
       setStatus(key, { state: "error", message: detail.display });
       addEvent("Action failed", detail.raw, "warn");
-      return false;
     } finally {
       setBusy(null);
     }
   }
 
   async function handleCreateIdentity() {
-    await run(
-      "identity",
-      "Generating an Ed25519 identity in this browser…",
-      "DID generated locally. Export the private key backup before relying on this identity.",
-      async () => {
-        const next = await createIdentity();
-        setIdentity(next);
-        addEvent("DID created", "Ed25519 private key remains in this browser unless you export it.");
-      },
-    );
+    await run("identity", "Generating an Ed25519 identity in this browser…", "DID generated locally. Export the private key backup before relying on this identity.", async () => {
+      const next = await createIdentity();
+      setIdentity(next);
+      addEvent("DID created", "Ed25519 private key remains in this browser unless you export it.");
+    });
   }
 
   function handleCreateMailbox() {
@@ -135,61 +126,63 @@ export default function Home() {
       return;
     }
     const path = didNotePath(fp);
-    await run(
-      "profile",
-      "Publishing the DID profile and DID-signed proof to Technocore…",
-      `Profile indexed at ${path} and backed by a DID-signed public proof.`,
-      async () => {
-        await publishProfile(identity, agentName, mailbox);
-        addEvent("Profile published", `${path} + signed proof`);
-      },
-    );
+    await run("profile", "Publishing the DID profile and signed proof to Technocore…", `Profile indexed at ${path} and backed by a DID signed public proof.`, async () => {
+      await publishProfile(identity, agentName, mailbox);
+      addEvent("Profile published", `${path} + signed proof`);
+    });
   }
 
   async function handleSignedMessage() {
     if (!identity) return;
     const target = mailbox || "lobby";
-    await run(
-      "message",
-      `Signing and sending to ${target}…`,
-      `Signed message accepted by Technocore in ${target}.`,
-      async () => {
-        await sendSignedMessage(identity, target, message);
-        addEvent("Signed message accepted", `${target} · ${identity.did.slice(-12)}`);
-      },
-    );
+    await run("message", `Signing and sending to ${target}…`, `Signed message accepted by Technocore in ${target}.`, async () => {
+      await sendSignedMessage(identity, target, message);
+      addEvent("Signed message accepted", `${target} · ${identity.did.slice(-12)}`);
+    });
   }
 
   async function handleContribution() {
     if (!identity) return;
+    if (!contributionUrl.trim() || !contributionSummary.trim()) {
+      setStatus("contribution", { state: "error", message: "Add a public project or contribution URL and a short description first." });
+      return;
+    }
     const path = contributionNotePath(fp);
-    await run(
-      "contribution",
-      "Publishing the contribution index and DID-signed proof to Technocore…",
-      `Contribution indexed at ${path} and backed by a DID-signed public proof.`,
-      async () => {
-        await publishContribution(identity, agentName, contributionUrl, contributionSummary);
-        addEvent("Contribution published", `${path} + signed proof`);
-      },
-    );
+    await run("contribution", "Publishing the builder proof to Technocore…", `Builder proof indexed at ${path} and backed by a DID signed public proof.`, async () => {
+      await publishContribution(identity, agentName, contributionUrl, contributionSummary);
+      addEvent("Builder proof published", `${path} + signed proof`);
+    });
   }
 
-  function handleShareOnX() {
-    if (!identity || !fp || !contributionPublished) return;
+  function shareParticipantOnX() {
+    if (!identity || !fp || !participantReady) return;
     const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
-    const publishedAgent = agentName.trim().toLowerCase();
     const text = [
-      "DID-signed Technocore contribution proof.",
+      "Technocore agent identity is live.",
       "",
-      `Agent: ${publishedAgent}`,
+      `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
       `Proof: ${proofUrl}`,
-      `Repo: ${contributionUrl}`,
       "",
       "#Technocore #FLOP",
     ].join("\n");
-    const shareUrl = `https://x.com/intent/post?text=${encodeURIComponent(text)}`;
-    window.open(shareUrl, "_blank", "noopener,noreferrer");
+    window.open(`https://x.com/intent/post?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+  }
+
+  function shareBuilderOnX() {
+    if (!identity || !fp || !contributionPublished) return;
+    const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
+    const text = [
+      "Built for the Technocore ecosystem.",
+      "",
+      `Agent: ${agentName.trim().toLowerCase()}`,
+      `DID: ${identity.did}`,
+      `Proof: ${proofUrl}`,
+      `Project: ${contributionUrl}`,
+      "",
+      "#Technocore #FLOP",
+    ].join("\n");
+    window.open(`https://x.com/intent/post?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
   }
 
   function handleImport(file: File) {
@@ -208,10 +201,6 @@ export default function Home() {
         setStatus("identity", { state: "error", message: detail.display });
         addEvent("Import failed", detail.raw, "warn");
       }
-    };
-    reader.onerror = () => {
-      setStatus("identity", { state: "error", message: "The selected identity file could not be read." });
-      addEvent("Import failed", "The selected identity file could not be read.", "warn");
     };
     reader.readAsText(file);
   }
@@ -234,7 +223,7 @@ export default function Home() {
         <div>
           <p className="eyebrow">VERIFIABLE AGENT IDENTITY</p>
           <h1>Own the key.<br />Prove the activity.</h1>
-          <p className="heroCopy">Create an Ed25519 DID in your browser, publish a Technocore profile, operate a signed mailbox and leave a portable public contribution proof.</p>
+          <p className="heroCopy">Create your own Technocore identity, sign activity with your DID, and keep the FLOP testnet path ready. Builders can also publish signed proof of their work.</p>
         </div>
         <div className="heroStatus">
           <div className="statusOrb"><span>{identity ? "01" : "00"}</span></div>
@@ -242,10 +231,15 @@ export default function Home() {
         </div>
       </section>
 
+      <div className="flowIntro">
+        <div><span>PARTICIPANT PATH</span><strong>For anyone joining Technocore and future FLOP testnet activity</strong></div>
+        <p>No GitHub account is required. Your DID, key and agent belong to you.</p>
+      </div>
+
       <section className="grid">
         <article className="panel identityPanel">
           <div className="panelHead"><span>01</span><h2>Identity</h2><em>{identity ? "READY" : "LOCAL"}</em></div>
-          <p className="muted">Keys are generated with browser WebCrypto. The private key never needs to be sent to this application server.</p>
+          <p className="muted">Generate your own Ed25519 DID. The private key stays in your browser and is never included in public shares.</p>
           <div className="didBox"><small>DID</small><code>{identity?.did || "Create a DID to reveal your public identity"}</code>{fp && <b>fingerprint {fp}</b>}</div>
           <div className="actions">
             {!identity ? <button className="primary" disabled={!!busy} onClick={handleCreateIdentity}>{busy === "identity" ? "Generating…" : "Generate DID"}</button> : <button onClick={() => exportIdentity(identity)}>Export private key</button>}
@@ -258,8 +252,9 @@ export default function Home() {
 
         <article className="panel">
           <div className="panelHead"><span>02</span><h2>Agent profile</h2><em>TECHNOCORE</em></div>
-          <label>Agent name<input value={agentName} onChange={(e) => { const value = e.target.value; setAgentName(value); localStorage.setItem("technocore-agent-console.agentName", value); }} placeholder="agent_console" /></label>
-          <label>Signed mailbox<div className="inputAction"><input value={mailbox} onChange={(e) => setMailbox(e.target.value)} placeholder="mb-p-..." /><button onClick={handleCreateMailbox}>Generate</button></div></label>
+          <p className="muted">Choose your own agent name and create a private mailbox. Each visitor gets a separate identity.</p>
+          <label>Agent name<input value={agentName} onChange={(e) => { const value = e.target.value; setAgentName(value); localStorage.setItem("technocore-agent-console.agentName", value); }} placeholder="my_agent" /></label>
+          <label>Private mailbox<div className="inputAction"><input value={mailbox} onChange={(e) => setMailbox(e.target.value)} placeholder="mb-p-..." /><button onClick={handleCreateMailbox}>Generate</button></div></label>
           <ActionNotice status={statuses.mailbox} />
           <button className="primary full" disabled={!identity || !mailbox || !!busy} onClick={handlePublishProfile}>{busy === "profile" ? "Publishing…" : "Publish DID profile"}</button>
           <ActionNotice status={statuses.profile} />
@@ -267,39 +262,47 @@ export default function Home() {
 
         <article className="panel">
           <div className="panelHead"><span>03</span><h2>Signed activity</h2><em>ED25519</em></div>
+          <p className="muted">Create real Technocore activity signed by your own DID key.</p>
           <label>Message<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} /></label>
           <div className="signatureNote"><span>✓</span><p><strong>Canonical signature</strong><br />room | nonce | message</p></div>
           <button className="primary full" disabled={!identity || !!busy} onClick={handleSignedMessage}>{busy === "message" ? "Signing…" : `Sign & send to ${mailbox ? "mailbox" : "lobby"}`}</button>
           <ActionNotice status={statuses.message} />
         </article>
 
-        <article className="panel contributionPanel">
-          <div className="panelHead"><span>04</span><h2>Contribution proof</h2><em>PUBLIC</em></div>
-          <label>Contribution URL<input value={contributionUrl} onChange={(e) => setContributionUrl(e.target.value)} /></label>
-          <label>Summary<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={3} /></label>
-          <button className="primary full" disabled={!identity || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish contribution"}</button>
+        <article className="panel testnet">
+          <div className="panelHead"><span>04</span><h2>FLOP testnet</h2><em>RESERVED</em></div>
+          <div className="testnetState"><span>NOT LIVE</span><strong>Testnet activity layer</strong><p>Faucet, test FLOP usage and useful activity tracking will be added here when official endpoints and rules are published.</p></div>
+          <div className="futureRows"><div><span>Faucet</span><b>Waiting for endpoint</b></div><div><span>Test FLOP</span><b>Waiting</b></div><div><span>Useful activity</span><b>Waiting</b></div></div>
+          {participantReady && <button className="full" onClick={shareParticipantOnX}>Share identity on X</button>}
+        </article>
+      </section>
+
+      <div className="flowIntro builderIntro">
+        <div><span>FOR BUILDERS</span><strong>Optional proof for people who built or contributed something</strong></div>
+        <p>GitHub is not required for normal users. Builders can attach any public project, PR, app or website they actually contributed to.</p>
+      </div>
+
+      <section className="builderGrid">
+        <article className="panel builderPanel">
+          <div className="panelHead"><span>05</span><h2>Builder proof</h2><em>OPTIONAL</em></div>
+          <label>Public project or contribution URL<input value={contributionUrl} onChange={(e) => { setContributionUrl(e.target.value); setStatus("contribution", { state: "info", message: "This URL will be included in your public builder proof." }); }} placeholder="https://github.com/you/project or https://your-app.com" /></label>
+          <label>What did you build or contribute?<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={4} placeholder="Describe your real contribution in one or two sentences." /></label>
+          <button className="primary full" disabled={!identity || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish builder proof"}</button>
           <ActionNotice status={statuses.contribution} />
           {identity && fp && contributionPublished && <>
-            <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID-signed proof ↗</a></div>
-            <button className="full" onClick={handleShareOnX}>Share proof on X</button>
-            <p className="muted">Shares only the public DID, agent name, proof and repository URL. Private key and mailbox are never included.</p>
+            <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID signed proof ↗</a></div>
+            <button className="full" onClick={shareBuilderOnX}>Share builder proof on X</button>
+            <p className="muted">Shares the public DID, agent name, proof and project URL. Private key and mailbox are never included.</p>
           </>}
         </article>
-      </section>
 
-      <section className="lowerGrid">
         <article className="panel trace">
-          <div className="panelHead"><span>05</span><h2>Activity trace</h2><em>THIS SESSION</em></div>
+          <div className="panelHead"><span>06</span><h2>Activity trace</h2><em>THIS SESSION</em></div>
           {events.length === 0 ? <div className="empty">No local actions yet. Create an identity to start the trace.</div> : events.map((event) => <div className="event" key={event.id}><i className={event.tone} /><div><strong>{event.title}</strong><small>{event.detail}</small></div></div>)}
         </article>
-        <article className="panel testnet">
-          <div className="panelHead"><span>06</span><h2>FLOP testnet</h2><em>RESERVED</em></div>
-          <div className="testnetState"><span>NOT LIVE</span><strong>Faucet integration</strong><p>This module is intentionally dormant until official testnet endpoints and eligibility rules are published.</p></div>
-          <div className="futureRows"><div><span>Faucet</span><b>Waiting for endpoint</b></div><div><span>Test FLOP</span><b>—</b></div><div><span>Useful activity</span><b>—</b></div></div>
-        </article>
       </section>
 
-      <footer><span>Open source · Browser-native keys · No LLM required</span><a href="https://github.com/dharmanan/technocore-agent-console" target="_blank" rel="noreferrer">GitHub ↗</a></footer>
+      <footer><span>Open source · Browser native keys · Participant and builder flows</span><a href="https://github.com/dharmanan/technocore-agent-console" target="_blank" rel="noreferrer">Source on GitHub ↗</a></footer>
     </main>
   );
 }
