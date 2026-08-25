@@ -47,6 +47,15 @@ function ActionNotice({ status }: { status?: ActionStatus }) {
   );
 }
 
+function StartCue({ label = "START HERE" }: { label?: string }) {
+  return (
+    <div className="startCue" aria-hidden="true">
+      <span>{label}</span>
+      <b>↓</b>
+    </div>
+  );
+}
+
 export default function Home() {
   const [identity, setIdentity] = useState<StoredIdentity | null>(null);
   const [agentName, setAgentName] = useState("agent_console");
@@ -59,6 +68,8 @@ export default function Home() {
   const [busy, setBusy] = useState<ActionKey | null>(null);
   const [serviceOnline, setServiceOnline] = useState<boolean | null>(null);
   const [fp, setFp] = useState("");
+  const [profilePublished, setProfilePublished] = useState(false);
+  const [activitySigned, setActivitySigned] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,12 +83,62 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!identity) return setFp("");
-    fingerprint(identity.did).then(setFp);
-  }, [identity]);
+    let cancelled = false;
+
+    async function hydrateProgress() {
+      if (!identity) {
+        setFp("");
+        setProfilePublished(false);
+        setActivitySigned(false);
+        return;
+      }
+
+      const nextFp = await fingerprint(identity.did);
+      if (cancelled) return;
+      setFp(nextFp);
+
+      const profileKey = `technocore-agent-console.progress.${identity.did}.profile`;
+      const activityKey = `technocore-agent-console.progress.${identity.did}.activity`;
+      const localProfile = localStorage.getItem(profileKey) === "true";
+      const localActivity = localStorage.getItem(activityKey) === "true";
+      setProfilePublished(localProfile);
+      setActivitySigned(localActivity);
+
+      if (!localProfile) {
+        try {
+          const profile = await proxyGet(didNotePath(nextFp));
+          if (!cancelled && profile.includes(identity.did)) {
+            localStorage.setItem(profileKey, "true");
+            setProfilePublished(true);
+          }
+        } catch {
+          // A missing profile simply means this step is not complete yet.
+        }
+      }
+
+      if (!localActivity && mailbox) {
+        try {
+          const raw = await proxyGet(`/r/${mailbox}?format=json`);
+          const room = JSON.parse(raw) as { messages?: Array<{ from?: string }> };
+          const found = room.messages?.some((item) => item.from === identity.did) ?? false;
+          if (!cancelled && found) {
+            localStorage.setItem(activityKey, "true");
+            setActivitySigned(true);
+          }
+        } catch {
+          // An empty or unreadable mailbox means this step is not complete yet.
+        }
+      }
+    }
+
+    hydrateProgress();
+    return () => { cancelled = true; };
+  }, [identity, mailbox]);
 
   const shortDid = useMemo(() => identity ? `${identity.did.slice(0, 20)}…${identity.did.slice(-12)}` : "No identity yet", [identity]);
-  const participantReady = statuses.profile?.state === "success" || statuses.message?.state === "success";
+  const phaseOneReady = Boolean(identity && profilePublished && activitySigned);
+  const currentStep = !identity ? 1 : !profilePublished ? 2 : !activitySigned ? 3 : 4;
+  const participantReady = phaseOneReady;
   const contributionPublished = statuses.contribution?.state === "success";
   const builderReady = Boolean(identity && contributionUrl.trim() && contributionSummary.trim());
 
@@ -108,6 +169,8 @@ export default function Home() {
     await run("identity", "Generating an Ed25519 identity in this browser…", "DID generated locally. Export the private key backup before relying on this identity.", async () => {
       const next = await createIdentity();
       setIdentity(next);
+      setProfilePublished(false);
+      setActivitySigned(false);
       addEvent("DID created", "Ed25519 private key remains in this browser unless you export it.");
     });
   }
@@ -129,6 +192,8 @@ export default function Home() {
     const path = didNotePath(fp);
     await run("profile", "Publishing the DID profile and signed proof to Technocore…", `Profile indexed at ${path} and backed by a DID signed public proof.`, async () => {
       await publishProfile(identity, agentName, mailbox);
+      localStorage.setItem(`technocore-agent-console.progress.${identity.did}.profile`, "true");
+      setProfilePublished(true);
       addEvent("Profile published", `${path} + signed proof`);
     });
   }
@@ -138,6 +203,8 @@ export default function Home() {
     const target = mailbox || "lobby";
     await run("message", `Signing and sending to ${target}…`, `Signed message accepted by Technocore in ${target}.`, async () => {
       await sendSignedMessage(identity, target, message);
+      localStorage.setItem(`technocore-agent-console.progress.${identity.did}.activity`, "true");
+      setActivitySigned(true);
       addEvent("Signed message accepted", `${target} · ${identity.did.slice(-12)}`);
     });
   }
@@ -159,11 +226,14 @@ export default function Home() {
     if (!identity || !fp || !participantReady) return;
     const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
     const text = [
-      "Technocore agent identity is live.",
+      "Technocore agent identity is ready for the next FLOP testnet phase.",
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
       `Proof: ${proofUrl}`,
+      "",
+      "Phase 1: identity + signed Technocore activity complete.",
+      "Phase 2: faucet + FLOP testnet activity coming when official endpoints go live.",
       "",
       "#Technocore #FLOP",
     ].join("\n");
@@ -209,6 +279,8 @@ export default function Home() {
   function handleForgetIdentity() {
     clearIdentity();
     setIdentity(null);
+    setProfilePublished(false);
+    setActivitySigned(false);
     setStatus("identity", { state: "info", message: "Local identity removed from this browser. Your exported backup is required to restore it." });
     addEvent("Local identity removed", "Export it first if you intend to reuse this DID.", "warn");
   }
@@ -222,25 +294,36 @@ export default function Home() {
 
       <section className="hero">
         <div>
-          <p className="eyebrow">VERIFIABLE AGENT IDENTITY</p>
+          <p className="eyebrow">PHASE 1 · AGENT IDENTITY</p>
           <h1>Own the key.<br />Prove the activity.</h1>
-          <p className="heroCopy">Create your own Technocore identity, sign activity with your DID, and keep the FLOP testnet path ready. Builders can also publish signed proof of their work.</p>
+          <p className="heroCopy">Prepare your Technocore agent identity now. Use the same DID when the FLOP testnet goes live.</p>
         </div>
-        <div className="heroStatus">
-          <div className="statusOrb"><span>{identity ? "01" : "00"}</span></div>
-          <div><strong>{identity ? "Identity ready" : "Identity not initialized"}</strong><small>{identity ? shortDid : "Generate or import a DID to begin"}</small></div>
+        <div className={`heroStatus ${phaseOneReady ? "complete" : ""}`}>
+          <div className="statusOrb"><span>{phaseOneReady ? "✓" : `0${Math.min(currentStep, 3)}`}</span></div>
+          <div><strong>{phaseOneReady ? "Phase 1 complete" : identity ? "Identity in progress" : "Start with your identity"}</strong><small>{identity ? shortDid : "Generate or import a DID to begin"}</small></div>
         </div>
       </section>
 
-      <div className="flowIntro">
-        <div><span>PARTICIPANT PATH</span><strong>For anyone joining Technocore and future FLOP testnet activity</strong></div>
-        <p>No GitHub account is required. Your DID, key and agent belong to you.</p>
+      <nav className="progressRail" aria-label="Phase 1 progress">
+        <div className={`progressStep ${identity ? "done" : currentStep === 1 ? "active" : ""}`}><i>{identity ? "✓" : "1"}</i><span><small>STEP 1</small><strong>Identity</strong></span></div>
+        <b aria-hidden="true" />
+        <div className={`progressStep ${profilePublished ? "done" : currentStep === 2 ? "active" : ""}`}><i>{profilePublished ? "✓" : "2"}</i><span><small>STEP 2</small><strong>Agent profile</strong></span></div>
+        <b aria-hidden="true" />
+        <div className={`progressStep ${activitySigned ? "done" : currentStep === 3 ? "active" : ""}`}><i>{activitySigned ? "✓" : "3"}</i><span><small>STEP 3</small><strong>Signed activity</strong></span></div>
+        <b aria-hidden="true" />
+        <div className={`progressStep phaseTwoStep ${phaseOneReady ? "active ready" : "future"}`}><i>→</i><span><small>NEXT</small><strong>FLOP testnet</strong></span></div>
+      </nav>
+
+      <div className="flowIntro phaseOneIntro">
+        <div><span>PHASE 1 · LIVE NOW</span><strong>Complete these three steps before the FLOP testnet phase</strong></div>
+        <p>Your DID and private key carry forward. Export the key, keep it safe, and do not create a replacement when Phase 2 arrives.</p>
       </div>
 
-      <section className="grid">
-        <article className="panel identityPanel">
-          <div className="panelHead"><span>01</span><h2>Identity</h2><em>{identity ? "READY" : "LOCAL"}</em></div>
-          <p className="muted">Generate your own Ed25519 DID. The private key stays in your browser and is never included in public shares.</p>
+      <section className="grid onboardingGrid">
+        <article className={`panel identityPanel stepPanel ${currentStep === 1 ? "activeStep" : ""} ${identity ? "stepDone" : ""}`}>
+          {currentStep === 1 && <StartCue />}
+          <div className="panelHead"><span>01</span><h2>Identity</h2><em>{identity ? "COMPLETE" : "START"}</em></div>
+          <p className="muted">Generate your own Ed25519 DID. Then export the private key and keep that file safe. It is never included in public shares.</p>
           <div className="didBox"><small>DID</small><code>{identity?.did || "Create a DID to reveal your public identity"}</code>{fp && <b>fingerprint {fp}</b>}</div>
           <div className="actions">
             {!identity ? <button className="primary" disabled={!!busy} onClick={handleCreateIdentity}>{busy === "identity" ? "Generating…" : "Generate DID"}</button> : <button onClick={() => exportIdentity(identity)}>Export private key</button>}
@@ -251,71 +334,81 @@ export default function Home() {
           <ActionNotice status={statuses.identity} />
         </article>
 
-        <article className="panel">
-          <div className="panelHead"><span>02</span><h2>Agent profile</h2><em>TECHNOCORE</em></div>
-          <p className="muted">Choose your own agent name and create a private mailbox. Each visitor gets a separate identity.</p>
+        <article className={`panel stepPanel ${currentStep === 2 ? "activeStep" : ""} ${profilePublished ? "stepDone" : ""}`}>
+          {currentStep === 2 && <StartCue label="NEXT STEP" />}
+          <div className="panelHead"><span>02</span><h2>Agent profile</h2><em>{profilePublished ? "COMPLETE" : "TECHNOCORE"}</em></div>
+          <p className="muted">Choose your own agent name, generate a private mailbox, then publish the DID profile to Technocore.</p>
           <label>Agent name<input value={agentName} onChange={(e) => { const value = e.target.value; setAgentName(value); localStorage.setItem("technocore-agent-console.agentName", value); }} placeholder="my_agent" /></label>
           <label>Private mailbox<div className="inputAction"><input value={mailbox} onChange={(e) => setMailbox(e.target.value)} placeholder="mb-p-..." /><button onClick={handleCreateMailbox}>Generate</button></div></label>
           <ActionNotice status={statuses.mailbox} />
-          <button className="primary full" disabled={!identity || !mailbox || !!busy} onClick={handlePublishProfile}>{busy === "profile" ? "Publishing…" : "Publish DID profile"}</button>
+          <button className="primary full" disabled={!identity || !mailbox || !!busy} onClick={handlePublishProfile}>{busy === "profile" ? "Publishing…" : profilePublished ? "Publish profile again" : "Publish DID profile"}</button>
           <ActionNotice status={statuses.profile} />
         </article>
 
-        <article className="panel">
-          <div className="panelHead"><span>03</span><h2>Signed activity</h2><em>ED25519</em></div>
-          <p className="muted">Create real Technocore activity signed by your own DID key.</p>
+        <article className={`panel stepPanel ${currentStep === 3 ? "activeStep" : ""} ${activitySigned ? "stepDone" : ""}`}>
+          {currentStep === 3 && <StartCue label="NEXT STEP" />}
+          <div className="panelHead"><span>03</span><h2>Signed activity</h2><em>{activitySigned ? "COMPLETE" : "ED25519"}</em></div>
+          <p className="muted">Create real Technocore activity signed by your own DID key. This completes the preparation layer.</p>
           <label>Message<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} /></label>
           <div className="signatureNote"><span>✓</span><p><strong>Canonical signature</strong><br />room | nonce | message</p></div>
-          <button className="primary full" disabled={!identity || !!busy} onClick={handleSignedMessage}>{busy === "message" ? "Signing…" : `Sign & send to ${mailbox ? "mailbox" : "lobby"}`}</button>
+          <button className="primary full" disabled={!identity || !profilePublished || !!busy} onClick={handleSignedMessage}>{busy === "message" ? "Signing…" : `Sign & send to ${mailbox ? "mailbox" : "lobby"}`}</button>
           <ActionNotice status={statuses.message} />
         </article>
 
-        <article className="panel testnet">
-          <div className="panelHead"><span>04</span><h2>FLOP testnet</h2><em>RESERVED</em></div>
-          <div className="testnetState"><span>NOT LIVE</span><strong>Testnet activity layer</strong><p>Faucet, test FLOP usage and useful activity tracking will be added here when official endpoints and rules are published.</p></div>
-          <div className="futureRows"><div><span>Faucet</span><b>Waiting for endpoint</b></div><div><span>Test FLOP</span><b>Waiting</b></div><div><span>Useful activity</span><b>Waiting</b></div></div>
-          {participantReady && <button className="full" onClick={shareParticipantOnX}>Share identity on X</button>}
+        <article className={`panel testnet phaseTwoPanel ${phaseOneReady ? "phaseReady" : "phaseLocked"}`}>
+          {phaseOneReady && <StartCue label="READY FOR PHASE 2" />}
+          <div className="panelHead"><span>04</span><h2>FLOP testnet</h2><em>COMING NEXT</em></div>
+          <div className="phaseLabel">PHASE 2</div>
+          <div className="testnetState">
+            <span>{phaseOneReady ? "YOUR IDENTITY IS READY" : "COMPLETE PHASE 1 FIRST"}</span>
+            <strong>Faucet + testnet activity</strong>
+            <p>{phaseOneReady ? "Keep this DID and exported private key. When official FLOP endpoints go live, faucet access and supported testnet actions will activate here." : "Finish Identity, Agent profile and Signed activity first. The same DID will carry into the future FLOP testnet flow."}</p>
+          </div>
+          <div className="futureRows"><div><span>Faucet</span><b>Waiting for endpoint</b></div><div><span>Test FLOP</span><b>Coming next</b></div><div><span>Useful activity</span><b>Coming next</b></div></div>
+          {participantReady && <button className="full shareReady" onClick={shareParticipantOnX}>Share Phase 1 proof on X</button>}
         </article>
       </section>
 
       <section className="traceSection">
         <article className="panel trace">
-          <div className="panelHead"><span>05</span><h2>Activity trace</h2><em>THIS SESSION</em></div>
+          <div className="panelHead"><span>TRACE</span><h2>Activity trace</h2><em>THIS SESSION</em></div>
           <p className="muted">Your local session history. This is part of the participant flow and is not a builder requirement.</p>
-          {events.length === 0 ? <div className="empty">No local actions yet. Create an identity to start the trace.</div> : events.map((event) => <div className="event" key={event.id}><i className={event.tone} /><div><strong>{event.title}</strong><small>{event.detail}</small></div></div>)}
+          {events.length === 0 ? <div className="empty">No local actions yet. Follow the highlighted step above to begin.</div> : events.map((event) => <div className="event" key={event.id}><i className={event.tone} /><div><strong>{event.title}</strong><small>{event.detail}</small></div></div>)}
         </article>
       </section>
 
-      <div className="flowIntro builderIntro">
-        <div><span>FOR BUILDERS</span><strong>Optional proof for people who built or contributed something</strong></div>
-        <p>GitHub is not required for normal users. Builders can attach any public project, PR, app or website they actually contributed to.</p>
-      </div>
+      <details className="builderDetails">
+        <summary>
+          <div><span>FOR BUILDERS · OPTIONAL</span><strong>Built something for the ecosystem?</strong><small>Open this only if you have a public project, PR, app or website to prove.</small></div>
+          <b aria-hidden="true">+</b>
+        </summary>
 
-      <section className="builderGrid">
-        <article className="panel builderPanel">
-          <div className="panelHead"><span>06</span><h2>Builder proof</h2><em>OPTIONAL</em></div>
-          <label>Public project or contribution URL<input value={contributionUrl} onChange={(e) => { setContributionUrl(e.target.value); setStatus("contribution", { state: "info", message: "This URL will be included in your public builder proof." }); }} placeholder="https://github.com/you/project or https://your-app.com" /></label>
-          <label>What did you build or contribute?<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={4} placeholder="Describe your real contribution in one or two sentences." /></label>
-          <button className="primary full" disabled={!builderReady || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish builder proof"}</button>
-          <ActionNotice status={statuses.contribution} />
-          {identity && fp && contributionPublished && <>
-            <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID signed proof ↗</a></div>
-            <button className="full" onClick={shareBuilderOnX}>Share builder proof on X</button>
-            <p className="muted">Shares the public DID, agent name, proof and project URL. Private key and mailbox are never included.</p>
-          </>}
-        </article>
+        <section className="builderGrid">
+          <article className="panel builderPanel">
+            <div className="panelHead"><span>BUILD</span><h2>Builder proof</h2><em>OPTIONAL</em></div>
+            <label>Public project or contribution URL<input value={contributionUrl} onChange={(e) => { setContributionUrl(e.target.value); setStatus("contribution", { state: "info", message: "This URL will be included in your public builder proof." }); }} placeholder="https://github.com/you/project or https://your-app.com" /></label>
+            <label>What did you build or contribute?<textarea value={contributionSummary} onChange={(e) => setContributionSummary(e.target.value)} rows={4} placeholder="Describe your real contribution in one or two sentences." /></label>
+            <button className="primary full" disabled={!builderReady || !!busy} onClick={handleContribution}>{busy === "contribution" ? "Publishing…" : "Publish builder proof"}</button>
+            <ActionNotice status={statuses.contribution} />
+            {identity && fp && contributionPublished && <>
+              <div className="proofLinks"><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${contributionNotePath(fp)}`}>Open index note ↗</a><a className="proofLink" target="_blank" rel="noreferrer" href={`https://technocore.chat${publicProofPath(fp)}`}>Open DID signed proof ↗</a></div>
+              <button className="full" onClick={shareBuilderOnX}>Share builder proof on X</button>
+              <p className="muted">Shares the public DID, agent name, proof and project URL. Private key and mailbox are never included.</p>
+            </>}
+          </article>
 
-        <article className="panel builderGuide">
-          <div className="panelHead"><span>INFO</span><h2>What counts as builder proof?</h2><em>PUBLIC WORK</em></div>
-          <p className="muted">Use this only when you have something real and public to point to.</p>
-          <div className="guideRows">
-            <div><strong>Own project</strong><span>Repository or live application you built.</span></div>
-            <div><strong>Contribution</strong><span>Public pull request, commit or other attributable work.</span></div>
-            <div><strong>Website or tool</strong><span>A public product or integration you actually contributed to.</span></div>
-          </div>
-          <p className="muted">If none of these apply, skip the builder section. Your participant identity and signed activity still work normally.</p>
-        </article>
-      </section>
+          <article className="panel builderGuide">
+            <div className="panelHead"><span>INFO</span><h2>What counts as builder proof?</h2><em>PUBLIC WORK</em></div>
+            <p className="muted">Use this only when you have something real and public to point to.</p>
+            <div className="guideRows">
+              <div><strong>Own project</strong><span>Repository or live application you built.</span></div>
+              <div><strong>Contribution</strong><span>Public pull request, commit or other attributable work.</span></div>
+              <div><strong>Website or tool</strong><span>A public product or integration you actually contributed to.</span></div>
+            </div>
+            <p className="muted">If none of these apply, keep this section closed. Your participant identity and signed activity work normally without it.</p>
+          </article>
+        </section>
+      </details>
 
       <footer><span>Open source · Browser native keys · Participant and builder flows</span><a href="https://github.com/dharmanan/technocore-agent-console" target="_blank" rel="noreferrer">Source on GitHub ↗</a></footer>
     </main>
