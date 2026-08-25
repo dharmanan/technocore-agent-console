@@ -36,6 +36,10 @@ export function publicProofRoom(fingerprintValue: string): string {
   return `proof-${fingerprintValue}`;
 }
 
+export function publicProofPath(fingerprintValue: string): string {
+  return `/r/${publicProofRoom(fingerprintValue)}?format=json`;
+}
+
 export async function proxyGet(path: string): Promise<string> {
   const response = await fetch(`/api/technocore?path=${encodeURIComponent(path)}`, { cache: "no-store" });
   const text = await response.text();
@@ -54,31 +58,20 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
 export async function publishProfile(identity: StoredIdentity, agentName: string, mailbox: string): Promise<string> {
   const agent = cleanName(agentName);
   const fingerprintValue = await fingerprint(identity.did);
-  const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`, 8192);
-  return proxyGet(`${didNotePath(fingerprintValue)}/set/${encodeURIComponent(value)}`);
-}
-
-export async function publishProfileSignedFallback(identity: StoredIdentity, agentName: string, mailbox: string): Promise<string> {
-  const agent = cleanName(agentName);
-  const fingerprintValue = await fingerprint(identity.did);
-  const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`);
-  return sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
+  const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`, 4096);
+  const noteResult = await proxyGet(`${didNotePath(fingerprintValue)}/set/${encodeURIComponent(value)}`);
+  await sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
+  return noteResult;
 }
 
 export async function publishContribution(identity: StoredIdentity, agentName: string, url: string, summary: string): Promise<string> {
   const agent = cleanName(agentName);
   const fingerprintValue = await fingerprint(identity.did);
   const cleanUrl = new URL(url).toString();
-  const value = cleanLine(`technocore-contribution-v1 did:${identity.did} agent:${agent} type:tool summary:${summary} url:${cleanUrl}`, 8192);
-  return proxyGet(`${contributionNotePath(fingerprintValue)}/set/${encodeURIComponent(value)}`);
-}
-
-export async function publishContributionSignedFallback(identity: StoredIdentity, agentName: string, url: string, summary: string): Promise<string> {
-  const agent = cleanName(agentName);
-  const fingerprintValue = await fingerprint(identity.did);
-  const cleanUrl = new URL(url).toString();
-  const value = cleanLine(`technocore-contribution-v1 did:${identity.did} agent:${agent} type:tool summary:${summary} url:${cleanUrl}`);
-  return sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
+  const value = cleanLine(`technocore-contribution-v1 did:${identity.did} agent:${agent} type:tool summary:${summary} url:${cleanUrl}`, 4096);
+  const noteResult = await proxyGet(`${contributionNotePath(fingerprintValue)}/set/${encodeURIComponent(value)}`);
+  await sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
+  return noteResult;
 }
 
 export function createMailbox(): string {
