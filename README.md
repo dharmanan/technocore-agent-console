@@ -4,17 +4,17 @@ Browser native onboarding for Technocore agent identity, DID signed activity, pu
 
 **Live app:** https://flop-console.vercel.app/
 
-**Status:** Phase 1 is live. FLOP faucet and testnet actions are not live yet.
+**Status:** Technocore preparation is live. FLOP faucet and testnet actions are not live yet.
 
 ## What this is
 
-Technocore Agent Console gives a non technical user a guided way to prepare a Technocore agent identity before the official FLOP testnet flow becomes available.
+Technocore Agent Console gives a non technical user a guided way to prepare a Technocore agent identity and signed activity while the official FLOP testnet access details are still pending.
 
 The current product has two separate paths.
 
 ### Participant path
 
-For anyone preparing for future FLOP testnet activity. No GitHub account is required.
+For anyone who wants to prepare a Technocore identity before the FLOP testnet opens. No GitHub account is required.
 
 1. Generate an Ed25519 `did:key` in the browser.
 2. Export the private key backup and store it safely.
@@ -22,21 +22,41 @@ For anyone preparing for future FLOP testnet activity. No GitHub account is requ
 4. Generate an agent mailbox.
 5. Publish the DID profile to Technocore.
 6. Create Technocore activity signed with the DID private key.
-7. Keep the same DID and private key for Phase 2.
+7. Keep the exported identity available for future use.
 
-Completing these steps does **not** mean the user has joined the FLOP testnet. It completes the identity and signed activity preparation layer.
+Completing these steps does **not** mean the user has joined the FLOP testnet and does **not** establish airdrop eligibility. It completes the Technocore identity and signed activity preparation layer.
 
-### Phase 2
+The official FLOP faucet authentication requirements are not final in the August 2026 teaser. This console will reuse the Phase 1 identity only where the final FLOP specification supports it.
 
-The FLOP testnet module is intentionally reserved until official faucet endpoints, authentication requirements, supported actions, and eligibility rules are public.
+## FLOP testnet and agent airdrop
 
-The intended continuation is:
+The August 2026 FLOP teaser describes the testnet as a roughly 90 day rehearsal planned for Q4 2026.
 
-`Existing DID → official faucet → test FLOP → supported testnet activity → activity tracking`
+For the agent cohort, the teaser says the core flow is:
 
-The console will use the same identity created in Phase 1 where the official FLOP specification allows it.
+`claim test FLOP → spend test FLOP on inference → accumulate inference usage`
 
-There is no claim that Phase 1 activity alone guarantees a FLOP airdrop or any future eligibility.
+The teaser says agent airdrop allocation is based largely on what agents spend on inference during the testnet, together with various prizes.
+
+It also says airdropped agent FLOP is initially locked and becomes liquid through continued inference usage, with every 3 FLOP spent on inference unlocking 1 airdropped FLOP.
+
+Because the document is still a draft and the Yellow Paper is not final, exact authentication, faucet, endpoint, and eligibility details can still change.
+
+## Phase 2
+
+The FLOP testnet module is intentionally reserved until official faucet endpoints, authentication requirements, and supported testnet actions are public.
+
+The target console flow is:
+
+`official faucet → test FLOP → inference sessions → FLOP spent → usage tracking`
+
+The main agent metrics we expect to surface are:
+
+* total test FLOP spent on inference
+* inference session count
+* testnet activity history
+
+The console will not display an eligibility score unless official rules make that calculation possible and truthful.
 
 ## Builder Proof
 
@@ -59,7 +79,7 @@ The builder can then open the public proof or share it on X.
 
 * Browser generated Ed25519 `did:key` identities
 * Private key export and identity import
-* Guided Phase 1 progress with animated active step cues
+* Guided Technocore preparation with animated active step cues
 * Agent name and mailbox creation
 * Technocore DID profile publication
 * DID signed Technocore activity
@@ -97,13 +117,14 @@ Participant sharing includes:
 * agent name
 * public DID
 * DID signed proof URL
-* Phase 1 status
+* Technocore preparation status
 * the live console URL
 * a reference to `@flop_labs`
+* a note that the FLOP teaser places emphasis on inference spend during testnet
 
 Builder sharing additionally includes the contribution description and public project URL.
 
-The private key is never included in the generated share text.
+The private key is never included in generated share text.
 
 ## Language support
 
@@ -146,7 +167,7 @@ npm run build
 * Technocore HTTP API
 * Vercel
 
-No database, LLM, wallet connection, or FLOP token logic is required for Phase 1.
+No database, LLM, wallet connection, or FLOP token logic is required for the current Technocore preparation layer.
 
 ## Deployment
 
@@ -173,9 +194,12 @@ Live now:
 Waiting for official FLOP specifications:
 
 * official faucet integration
-* test FLOP balance and usage
-* supported testnet actions
-* useful activity tracking
+* faucet authentication
+* test FLOP balance
+* inference request flow
+* FLOP spent on inference
+* inference session tracking
+* testnet activity history
 * eligibility related UI only where official rules make it possible to calculate truthfully
 
 Potential later additions:
@@ -188,7 +212,7 @@ Potential later additions:
 
 This is an independent open source tool built around public Technocore interfaces. It is not an official FLOP Labs product and does not promise, calculate, or guarantee airdrop eligibility.
 
-Official FLOP testnet rules and endpoints should remain the source of truth when Phase 2 becomes available.
+The FLOP teaser is currently version 0.1 draft and states that several figures and protocol parameters are provisional. The final Yellow Paper and official testnet documentation should remain the source of truth when Phase 2 becomes available.
 
 ## Repository
 
