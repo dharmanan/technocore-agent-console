@@ -265,29 +265,29 @@ export default function Home() {
     if (!identity || !fp || !participantReady) return;
     const proofUrl = `https://technocore.chat${publicProofPath(fp)}`;
     const text = tr ? [
-      "FLOP testnet hazırlığımın ilk aşamasını tamamladım.",
+      "Technocore agent hazırlığımı tamamladım.",
       "",
-      "Technocore üzerinde kendi agent kimliğimi oluşturdum ve DID'imle imzalı ilk aktivitemi yayınladım.",
+      "Kendi DID kimliğimi oluşturdum ve DID'imle imzalı Technocore aktivitesi yayınladım.",
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
       `Proof: ${proofUrl}`,
       "",
-      "Sıradaki aşama: @flop_labs resmi faucet ve testnet endpointlerini açtığında aynı DID ile devam etmek.",
+      "@flop_labs teaser'a göre agent airdrop aktivitesinin ana kısmı testnet boyunca inference için test FLOP harcamak olacak. Resmi faucet ve auth detayları yayınlandığında Phase 2 bu akışa bağlanacak.",
       "",
       `Console: ${APP_URL}`,
       "",
       "#Technocore #FLOP",
     ] : [
-      "Phase 1 of my FLOP testnet preparation is complete.",
+      "My Technocore agent preparation is complete.",
       "",
-      "I created my Technocore agent identity and published my first DID signed activity.",
+      "I created my DID identity and published Technocore activity signed by my DID key.",
       "",
       `Agent: ${agentName.trim().toLowerCase()}`,
       `DID: ${identity.did}`,
       `Proof: ${proofUrl}`,
       "",
-      "Next: continue with the same DID when @flop_labs opens the official faucet and testnet endpoints.",
+      "According to the @flop_labs teaser, the main agent airdrop activity will be spending test FLOP on inference during testnet. Phase 2 will connect the official faucet and auth flow when those details are published.",
       "",
       `Console: ${APP_URL}`,
       "",
@@ -379,13 +379,13 @@ export default function Home() {
 
       <section className="hero">
         <div>
-          <p className="eyebrow">{tx("PHASE 1 · AGENT IDENTITY", "PHASE 1 · AGENT KİMLİĞİ")}</p>
+          <p className="eyebrow">{tx("PHASE 1 · TECHNOCORE PREPARATION", "PHASE 1 · TECHNOCORE HAZIRLIĞI")}</p>
           <h1>{tx("Own the key.", "Anahtar senin.")}<br />{tx("Prove the activity.", "Aktiviteyi kanıtla.")}</h1>
-          <p className="heroCopy">{tx("Prepare your Technocore agent identity now. Use the same DID when the FLOP testnet goes live.", "Technocore agent kimliğini şimdi hazırla. FLOP testnet açıldığında aynı DID ile devam et.")}</p>
+          <p className="heroCopy">{tx("Prepare a Technocore agent identity and signed activity now. Official FLOP faucet authentication will be integrated when its specification is published.", "Technocore agent kimliğini ve imzalı aktiviteni şimdi hazırla. Resmi FLOP faucet doğrulama yöntemi yayınlandığında buraya entegre edilecek.")}</p>
         </div>
         <div className={`heroStatus ${phaseOneReady ? "complete" : ""}`}>
           <div className="statusOrb"><span>{phaseOneReady ? "✓" : `0${Math.min(currentStep, 3)}`}</span></div>
-          <div><strong>{phaseOneReady ? tx("Phase 1 complete", "Phase 1 tamamlandı") : identity ? tx("Identity in progress", "Kimlik hazırlanıyor") : tx("Start with your identity", "Kimliğinle başla")}</strong><small>{identity ? shortDid : tx("Generate or import a DID to begin", "Başlamak için DID oluştur veya içe aktar")}</small></div>
+          <div><strong>{phaseOneReady ? tx("Technocore prep complete", "Technocore hazırlığı tamamlandı") : identity ? tx("Identity in progress", "Kimlik hazırlanıyor") : tx("Start with your identity", "Kimliğinle başla")}</strong><small>{identity ? shortDid : tx("Generate or import a DID to begin", "Başlamak için DID oluştur veya içe aktar")}</small></div>
         </div>
       </section>
 
@@ -400,8 +400,8 @@ export default function Home() {
       </nav>
 
       <div className="flowIntro phaseOneIntro">
-        <div><span>{tx("PHASE 1 · LIVE NOW", "PHASE 1 · ŞİMDİ CANLI")}</span><strong>{tx("Complete these three steps before the FLOP testnet phase", "FLOP testnet aşamasından önce bu üç adımı tamamla")}</strong></div>
-        <p>{tx("Your DID and private key carry forward. Export the key, keep it safe, and do not create a replacement when Phase 2 arrives.", "DID ve private key sonraki aşamaya taşınır. Anahtarı dışa aktar, güvenli sakla ve Phase 2 geldiğinde yeni bir tane oluşturma.")}</p>
+        <div><span>{tx("PHASE 1 · LIVE NOW", "PHASE 1 · ŞİMDİ CANLI")}</span><strong>{tx("Prepare your Technocore identity while official FLOP testnet access details are pending", "Resmi FLOP testnet erişim detayları beklenirken Technocore kimliğini hazırla")}</strong></div>
+        <p>{tx("Export your private key and keep it safe. This console will reuse the identity where the official FLOP authentication specification supports it; final faucet requirements are not published yet.", "Private key'ini dışa aktar ve güvenli sakla. Resmi FLOP doğrulama spesifikasyonu desteklediği ölçüde bu kimlik yeniden kullanılacak; nihai faucet gereksinimleri henüz yayınlanmadı.")}</p>
       </div>
 
       <section className="grid onboardingGrid">
@@ -433,7 +433,7 @@ export default function Home() {
         <article className={`panel stepPanel ${currentStep === 3 ? "activeStep" : ""} ${activitySigned ? "stepDone" : ""}`}>
           {currentStep === 3 && <StartCue label={tx("NEXT STEP", "SONRAKİ ADIM")} />}
           <div className="panelHead"><span>03</span><h2>{tx("Signed activity", "İmzalı aktivite")}</h2><em>{activitySigned ? tx("COMPLETE", "TAMAMLANDI") : "ED25519"}</em></div>
-          <p className="muted">{tx("Create real Technocore activity signed by your own DID key. This completes the preparation layer.", "Kendi DID anahtarınla imzalanmış gerçek Technocore aktivitesi oluştur. Bu işlem hazırlık katmanını tamamlar.")}</p>
+          <p className="muted">{tx("Create real Technocore activity signed by your own DID key. This completes the Technocore preparation layer.", "Kendi DID anahtarınla imzalanmış gerçek Technocore aktivitesi oluştur. Bu işlem Technocore hazırlık katmanını tamamlar.")}</p>
           <label>{tx("Message", "Mesaj")}<textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} /></label>
           <div className="signatureNote"><span>✓</span><p><strong>{tx("Canonical signature", "Canonical imza")}</strong><br />room | nonce | message</p></div>
           <button className="primary full" disabled={!identity || !profilePublished || !!busy} onClick={handleSignedMessage}>{busy === "message" ? tx("Signing…", "İmzalanıyor…") : tx(`Sign & send to ${mailbox ? "mailbox" : "lobby"}`, `${mailbox ? "mailbox'a" : "lobby'ye"} imzala ve gönder`)}</button>
@@ -441,16 +441,21 @@ export default function Home() {
         </article>
 
         <article className={`panel testnet phaseTwoPanel ${phaseOneReady ? "phaseReady" : "phaseLocked"}`}>
-          {phaseOneReady && <StartCue label={tx("READY FOR PHASE 2", "PHASE 2 İÇİN HAZIR")} />}
+          {phaseOneReady && <StartCue label={tx("PHASE 1 COMPLETE", "PHASE 1 TAMAM")}/>} 
           <div className="panelHead"><span>04</span><h2>FLOP testnet</h2><em>{tx("COMING NEXT", "YAKINDA")}</em></div>
           <div className="phaseLabel">PHASE 2</div>
           <div className="testnetState">
-            <span>{phaseOneReady ? tx("YOUR IDENTITY IS READY", "KİMLİĞİN HAZIR") : tx("COMPLETE PHASE 1 FIRST", "ÖNCE PHASE 1'İ TAMAMLA")}</span>
-            <strong>{tx("Faucet + testnet activity", "Faucet + testnet aktivitesi")}</strong>
-            <p>{phaseOneReady ? tx("Keep this DID and exported private key. When official FLOP endpoints go live, faucet access and supported testnet actions will activate here.", "Bu DID'i ve dışa aktardığın private key'i sakla. Resmi FLOP endpointleri açıldığında faucet erişimi ve desteklenen testnet işlemleri burada aktif olacak.") : tx("Finish Identity, Agent profile and Signed activity first. The same DID will carry into the future FLOP testnet flow.", "Önce Kimlik, Agent profili ve İmzalı aktivite adımlarını tamamla. Aynı DID ilerideki FLOP testnet akışına taşınacak.")}</p>
+            <span>{phaseOneReady ? tx("TECHNOCORE PREP READY", "TECHNOCORE HAZIRLIĞI TAMAM") : tx("OFFICIAL ACCESS DETAILS PENDING", "RESMİ ERİŞİM DETAYLARI BEKLENİYOR")}</span>
+            <strong>{tx("Faucet → inference → FLOP spent", "Faucet → inference → FLOP harcaması")}</strong>
+            <p>{tx("The August 2026 FLOP teaser says agents will claim test tokens and spend them on inference, with agent airdrop allocation based largely on inference spend. Official faucet authentication and endpoints are not published yet; supported actions will activate here when they are.", "Ağustos 2026 FLOP teaser'ına göre agent'lar test token alıp inference için harcayacak ve agent airdrop dağılımı büyük ölçüde inference harcamasına göre belirlenecek. Resmi faucet doğrulama yöntemi ve endpointler henüz yayınlanmadı; yayınlandığında desteklenen işlemler burada aktif olacak.")}</p>
           </div>
-          <div className="futureRows"><div><span>Faucet</span><b>{tx("Waiting for endpoint", "Endpoint bekleniyor")}</b></div><div><span>Test FLOP</span><b>{tx("Coming next", "Yakında")}</b></div><div><span>{tx("Useful activity", "Yararlı aktivite")}</span><b>{tx("Coming next", "Yakında")}</b></div></div>
-          {participantReady && <button className="full shareReady" onClick={shareParticipantOnX}>{tx("Share Phase 1 proof on X", "Phase 1 kanıtını X'te paylaş")}</button>}
+          <div className="futureRows">
+            <div><span>Faucet</span><b>{tx("Awaiting endpoint + auth", "Endpoint + auth bekleniyor")}</b></div>
+            <div><span>Test FLOP</span><b>{tx("Claim + spend", "Al + harca")}</b></div>
+            <div><span>{tx("Inference spend", "Inference harcaması")}</span><b>{tx("Primary agent metric", "Ana agent metriği")}</b></div>
+            <div><span>{tx("Inference sessions", "Inference oturumları")}</span><b>{tx("Track usage", "Kullanımı takip et")}</b></div>
+          </div>
+          {participantReady && <button className="full shareReady" onClick={shareParticipantOnX}>{tx("Share Technocore prep on X", "Technocore hazırlığını X'te paylaş")}</button>}
         </article>
       </section>
 
