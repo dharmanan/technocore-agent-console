@@ -451,8 +451,8 @@ export default function Home() {
           </div>
           <div className="futureRows">
             <div><span>Faucet</span><b>{tx("Awaiting endpoint + auth", "Endpoint + auth bekleniyor")}</b></div>
-            <div><span>Test FLOP</span><b>{tx("Claim + spend", "Al + harca")}</b></div>
-            <div><span>{tx("Inference spend", "Inference harcaması")}</span><b>{tx("Primary agent metric", "Ana agent metriği")}</b></div>
+            <div><span>Test FLOP</span><b>{tx("Claim → spend on inference", "Al → inference için harca")}</b></div>
+            <div><span>{tx("Inference spend", "Inference harcaması")}</span><b>{tx("Primary airdrop metric", "Airdrop ana metriği")}</b></div>
             <div><span>{tx("Inference sessions", "Inference oturumları")}</span><b>{tx("Track usage", "Kullanımı takip et")}</b></div>
           </div>
           {participantReady && <button className="full shareReady" onClick={shareParticipantOnX}>{tx("Share Technocore prep on X", "Technocore hazırlığını X'te paylaş")}</button>}
