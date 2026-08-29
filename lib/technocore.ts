@@ -114,31 +114,27 @@ function isSystemProof(text: string | undefined) {
 
 export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
-  const onboardingActivity = room.startsWith("mb-p-");
-  const targetRoom = onboardingActivity ? publicProofRoom(await fingerprint(identity.did)) : room;
 
-  if (onboardingActivity) {
-    try {
-      if (await hasExactActivity(identity, targetRoom, body)) return "already-confirmed";
-    } catch {
-      // Continue to the write attempt if the preflight read is temporarily unavailable.
-    }
+  // The caller chooses the room. In particular, an mb-p-* room is already a
+  // Technocore signed-write mailbox. Do not silently redirect mailbox activity
+  // into the public proof room: verification must read back the same room the
+  // UI tells the user is receiving the message.
+  try {
+    if (await hasExactActivity(identity, room, body)) return "already-confirmed";
+  } catch {
+    // A transient read failure should not prevent the single write attempt.
   }
 
   let writeResult = "";
   let writeError: unknown = null;
-  try { writeResult = await sendSignedMessageToRoom(identity, targetRoom, body); }
+  try { writeResult = await sendSignedMessageToRoom(identity, room, body); }
   catch (error) { writeError = error; }
 
-  if (onboardingActivity) {
-    const confirmed = await waitForExactActivity(identity, targetRoom, body);
-    if (confirmed) return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
-    const raw = writeError instanceof Error ? writeError.message : "read-back confirmation did not arrive";
-    throw new Error(`ACTIVITY_VERIFY_PENDING: ${raw}`);
-  }
+  const confirmed = await waitForExactActivity(identity, room, body);
+  if (confirmed) return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
 
-  if (writeError) throw writeError;
-  return writeResult;
+  const raw = writeError instanceof Error ? writeError.message : "read-back confirmation did not arrive";
+  throw new Error(`ACTIVITY_VERIFY_PENDING: ${raw}`);
 }
 
 export async function hasVerifiableActivity(identity: StoredIdentity): Promise<boolean> {
