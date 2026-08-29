@@ -155,6 +155,14 @@ function exportPayload(identity: StoredIdentity): StoredIdentity {
 }
 
 export function exportIdentity(identity: StoredIdentity) {
+  // The identity card deliberately passes an own `profile: undefined` property.
+  // Treat that as an explicit request for a key-only emergency backup, even if
+  // a verified profile exists in localStorage.
+  if (Object.prototype.hasOwnProperty.call(identity, "profile") && identity.profile === undefined) {
+    exportIdentityKey(identity);
+    return;
+  }
+
   const payload = exportPayload(identity);
   if (!payload.profile) {
     exportIdentityKey(payload);
