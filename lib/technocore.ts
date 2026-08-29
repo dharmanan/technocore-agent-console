@@ -127,12 +127,27 @@ export async function proxyGet(path: string): Promise<string> {
   return text;
 }
 
+async function proxyPostSigned(room: string, did: string, sig: string, nonce: string, textValue: string): Promise<string> {
+  const response = await fetch("/api/technocore", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({
+      path: `/r/${room}`,
+      payload: { did, sig, nonce, text: textValue },
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(text || `Technocore returned ${response.status}`);
+  return text;
+}
+
 async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
   const nonce = Date.now().toString();
   const canonical = `${room}|${nonce}|${body}`;
   const sig = await signText(identity.privateKeyJwk, canonical);
-  return proxyGet(`/r/${encodeSegment(room)}/say-signed/${encodeSegment(identity.did)}/${encodeSegment(sig)}/${nonce}/${encodeURIComponent(body)}`);
+  return proxyPostSigned(room, identity.did, sig, nonce, body);
 }
 
 async function hasExactActivity(identity: StoredIdentity, room: string, body: string): Promise<boolean> {
@@ -171,13 +186,23 @@ function isSystemProof(text: string | undefined) {
 
 export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
+  const verifiedMailbox = identity.profile?.mailbox?.trim();
+  const targetRoom = verifiedMailbox || room;
+
+  if (verifiedMailbox && room !== verifiedMailbox) {
+    // Step-three activity belongs to the mailbox that was cryptographically bound
+    // into the verified profile. Never allow stale React/localStorage mailbox state
+    // to redirect a signed activity to an older room.
+    room = verifiedMailbox;
+  }
+
   const unresolved = loadPendingActivity(identity.did);
 
   if (unresolved) {
     try {
       const resolved = await hasExactActivity(identity, unresolved.room, unresolved.text);
       if (resolved) clearPendingActivity(identity.did);
-      else if (unresolved.room === room && unresolved.text === body) throw new Error("ACTIVITY_DELIVERY_PENDING: previous attempt is still waiting for read-back");
+      else if (unresolved.room === targetRoom && unresolved.text === body) throw new Error("ACTIVITY_DELIVERY_PENDING: previous attempt is still waiting for read-back");
       else throw new Error("ACTIVITY_PENDING_EXISTS: verify the previous delivery before sending another activity");
     } catch (error) {
       if (error instanceof Error && (error.message.startsWith("ACTIVITY_DELIVERY_PENDING") || error.message.startsWith("ACTIVITY_PENDING_EXISTS"))) throw error;
@@ -186,19 +211,19 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   }
 
   try {
-    if (await hasExactActivity(identity, room, body)) return "already-confirmed";
+    if (await hasExactActivity(identity, targetRoom, body)) return "already-confirmed";
   } catch {
     // A transient read failure should not prevent the single write attempt.
   }
 
-  savePendingActivity({ did: identity.did, room, text: body, attemptedAt: new Date().toISOString() });
+  savePendingActivity({ did: identity.did, room: targetRoom, text: body, attemptedAt: new Date().toISOString() });
 
   let writeResult = "";
   let writeError: unknown = null;
-  try { writeResult = await sendSignedMessageToRoom(identity, room, body); }
+  try { writeResult = await sendSignedMessageToRoom(identity, targetRoom, body); }
   catch (error) { writeError = error; }
 
-  const confirmed = await waitForExactActivity(identity, room, body);
+  const confirmed = await waitForExactActivity(identity, targetRoom, body);
   if (confirmed) {
     clearPendingActivity(identity.did);
     return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
