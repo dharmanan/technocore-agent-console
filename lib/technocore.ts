@@ -3,11 +3,21 @@ import { signText, type StoredIdentity } from "./identity";
 export const TECHNOCORE_ORIGIN = "https://technocore.chat";
 const PENDING_ACTIVITY_EVENT = "technocore-pending-activity-changed";
 const PENDING_ACTIVITY_TTL_MS = 90_000;
+const PENDING_PROFILE_TTL_MS = 10 * 60_000;
 
 export type PendingActivity = {
   did: string;
   room: string;
   text: string;
+  attemptedAt: string;
+};
+
+type PendingProfile = {
+  did: string;
+  agent: string;
+  mailbox: string;
+  proofRoom: string;
+  value: string;
   attemptedAt: string;
 };
 
@@ -41,6 +51,10 @@ function pendingActivityKey(did: string) {
   return `technocore-agent-console.pendingActivity.${did}`;
 }
 
+function pendingProfileKey(did: string) {
+  return `technocore-agent-console.pendingProfile.${did}`;
+}
+
 function broadcastPendingActivityChange() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(PENDING_ACTIVITY_EVENT));
 }
@@ -50,6 +64,11 @@ export function pendingActivityEventName() {
 }
 
 function pendingActivityAgeMs(value: PendingActivity): number {
+  const attemptedAt = Date.parse(value.attemptedAt);
+  return Number.isFinite(attemptedAt) ? Math.max(0, Date.now() - attemptedAt) : Number.POSITIVE_INFINITY;
+}
+
+function pendingProfileAgeMs(value: PendingProfile): number {
   const attemptedAt = Date.parse(value.attemptedAt);
   return Number.isFinite(attemptedAt) ? Math.max(0, Date.now() - attemptedAt) : Number.POSITIVE_INFINITY;
 }
@@ -82,6 +101,33 @@ export function clearPendingActivity(did: string) {
   if (typeof window === "undefined") return;
   localStorage.removeItem(pendingActivityKey(did));
   broadcastPendingActivityChange();
+}
+
+function loadPendingProfile(did: string): PendingProfile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(pendingProfileKey(did));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as PendingProfile;
+    if (!(value?.did === did && value.agent && value.mailbox && value.proofRoom && value.value)) return null;
+    if (pendingProfileAgeMs(value) > PENDING_PROFILE_TTL_MS) {
+      localStorage.removeItem(pendingProfileKey(did));
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingProfile(value: PendingProfile) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(pendingProfileKey(value.did), JSON.stringify(value));
+}
+
+function clearPendingProfile(did: string) {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(pendingProfileKey(did));
 }
 
 export function cleanName(value: string): string {
@@ -215,8 +261,6 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
     } else if (unresolved.room === targetRoom && unresolved.text === body) {
       throw new Error("ACTIVITY_DELIVERY_PENDING: this exact message is still waiting for read-back");
     } else {
-      // Pending delivery is scoped to one exact message, not to the whole identity.
-      // A different message is allowed to proceed and replaces the old local pending marker.
       clearPendingActivity(identity.did);
     }
   }
@@ -325,7 +369,13 @@ async function canReadMatchingIndex(path: string, identity: StoredIdentity, agen
 }
 
 async function canReadMatchingProof(path: string, identity: StoredIdentity, agent: string, mailbox: string): Promise<boolean> {
-  try { return profileProofMatches(await proxyGet(path), identity, agent, mailbox); } catch { return false; }
+  try { return profileProofMatches(await proxyGet(`${path}&n=${Date.now()}`), identity, agent, mailbox); } catch { return false; }
+}
+
+export async function verifyProfile(identity: StoredIdentity, agentName: string, mailbox: string): Promise<boolean> {
+  const agent = cleanName(agentName);
+  const fingerprintValue = await fingerprint(identity.did);
+  return canReadMatchingProof(publicProofPath(fingerprintValue), identity, agent, mailbox);
 }
 
 export async function publishProfile(identity: StoredIdentity, agentName: string, mailbox: string, onStage?: (stage: ProfilePublishStage) => void): Promise<ProfilePublishResult> {
@@ -336,46 +386,77 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
   const proofRoom = publicProofRoom(fingerprintValue);
   const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`, 4096);
 
+  onStage?.("checking-proof");
+  if (await canReadMatchingProof(proofPath, identity, agent, mailbox)) {
+    clearPendingProfile(identity.did);
+    onStage?.("proof-confirmed");
+    return { index: "existing", proof: "existing" };
+  }
+
+  const pending = loadPendingProfile(identity.did);
+  const samePending = Boolean(
+    pending &&
+    pending.agent === agent &&
+    pending.mailbox === mailbox &&
+    pending.proofRoom === proofRoom &&
+    pending.value === value
+  );
+
+  if (samePending) {
+    onStage?.("checking-proof");
+    const confirmed = await waitForExactActivity(identity, proofRoom, value, 30, 2000);
+    if (confirmed) {
+      clearPendingProfile(identity.did);
+      onStage?.("proof-confirmed");
+      return { index: "existing", proof: "existing" };
+    }
+    throw new Error("PROFILE_PROOF_PENDING: signed profile was already sent once and is still waiting for Technocore read-back; no duplicate write was made");
+  }
+
+  savePendingProfile({
+    did: identity.did,
+    agent,
+    mailbox,
+    proofRoom,
+    value,
+    attemptedAt: new Date().toISOString(),
+  });
+
   onStage?.("checking-index");
   let indexState: ProfilePublishResult["index"] = "existing";
-  if (!await canReadMatchingIndex(notePath, identity, agent, mailbox)) {
-    onStage?.("writing-index");
-    try {
+  try {
+    if (!await canReadMatchingIndex(notePath, identity, agent, mailbox)) {
+      onStage?.("writing-index");
       await proxyGet(`${notePath}/set/${encodeURIComponent(value)}`);
       indexState = "published";
-    } catch (error) {
-      if (!await canReadMatchingIndex(notePath, identity, agent, mailbox)) {
-        throw new Error(`PROFILE_INDEX_PENDING: ${error instanceof Error ? error.message : "Unknown Technocore error"}`);
-      }
-      indexState = "confirmed-after-error";
     }
+  } catch {
+    // The signed proof room is canonical for ownership verification in this console.
+    // A slow note write must not cause a duplicate signed proof submission.
   }
 
   onStage?.("index-confirmed");
-  onStage?.("checking-proof");
-  let proofState: ProfilePublishResult["proof"] = "existing";
+  onStage?.("writing-proof");
 
-  if (!await canReadMatchingProof(proofPath, identity, agent, mailbox)) {
-    onStage?.("writing-proof");
-    let writeError: unknown = null;
-
-    try {
-      await sendSignedMessageToRoom(identity, proofRoom, value);
-    } catch (error) {
-      writeError = error;
-    }
-
-    const confirmed = await waitForExactActivity(identity, proofRoom, value, 20, 1500);
-    if (!confirmed) {
-      const raw = writeError instanceof Error ? writeError.message : "ownership proof was not readable after the verification window";
-      throw new Error(`PROFILE_PROOF_PENDING: ${raw}`);
-    }
-
-    proofState = writeError ? "confirmed-after-error" : "published";
+  let writeError: unknown = null;
+  try {
+    await sendSignedMessageToRoom(identity, proofRoom, value);
+  } catch (error) {
+    writeError = error;
   }
 
-  onStage?.("proof-confirmed");
-  return { index: indexState, proof: proofState };
+  const confirmed = await waitForExactActivity(identity, proofRoom, value, 30, 2000);
+  if (confirmed) {
+    clearPendingProfile(identity.did);
+    onStage?.("proof-confirmed");
+    return {
+      index: indexState,
+      proof: writeError ? "confirmed-after-error" : "published",
+    };
+  }
+
+  const raw = writeError instanceof Error ? writeError.message : "ownership proof is still waiting for Technocore read-back";
+  throw new Error(`PROFILE_PROOF_PENDING: ${raw}`);
 }
 
 export async function publishContribution(identity: StoredIdentity, agentName: string, url: string, summary: string): Promise<string> {
