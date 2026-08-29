@@ -112,15 +112,38 @@ export async function signText(privateKeyJwk: JsonWebKey, canonical: string): Pr
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function exportPayload(identity: StoredIdentity): StoredIdentity {
+  if (identity.profile) return identity;
+  if (typeof window === "undefined") return identity;
+
+  const profileConfirmed = localStorage.getItem(`technocore-agent-console.progress.${identity.did}.profile`) === "true";
+  const agentName = localStorage.getItem("technocore-agent-console.agentName")?.trim() || "";
+  const mailbox = localStorage.getItem("technocore-agent-console.mailbox")?.trim() || "";
+
+  if (!profileConfirmed || !agentName || !mailbox) return identity;
+
+  const enriched: StoredIdentity = {
+    ...identity,
+    profile: {
+      agentName,
+      mailbox,
+      verifiedAt: new Date().toISOString(),
+    },
+  };
+  saveIdentity(enriched);
+  return enriched;
+}
+
 export function exportIdentity(identity: StoredIdentity) {
-  const blob = new Blob([JSON.stringify(identity, null, 2)], { type: "application/json" });
+  const payload = exportPayload(identity);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  const safeAgent = identity.profile?.agentName?.replace(/[^a-z0-9_-]/gi, "_");
+  const safeAgent = payload.profile?.agentName?.replace(/[^a-z0-9_-]/gi, "_");
   anchor.download = safeAgent
     ? `technocore-agent-${safeAgent}.json`
-    : `technocore-identity-${identity.did.slice(-10)}.json`;
+    : `technocore-identity-key-${payload.did.slice(-10)}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
