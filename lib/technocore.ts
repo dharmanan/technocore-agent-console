@@ -1,7 +1,6 @@
 import { signText, type StoredIdentity } from "./identity";
 
 export const TECHNOCORE_ORIGIN = "https://technocore.chat";
-export const FIRST_ACTIVITY_ROOM = "lobby";
 
 export type ProfilePublishStage =
   | "checking-index"
@@ -15,8 +14,6 @@ export type ProfilePublishResult = {
   index: "existing" | "published" | "confirmed-after-error";
   proof: "existing" | "published" | "confirmed-after-error";
 };
-
-export type ActivityPublishResult = "existing" | "published" | "confirmed-after-error";
 
 type RoomMessage = { from?: string; text?: string; seq?: number; ts?: string; nonce?: string };
 type RoomResponse = { messages?: RoomMessage[] } | RoomMessage[];
@@ -80,55 +77,59 @@ async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, t
 }
 
 async function hasExactActivity(identity: StoredIdentity, room: string, body: string): Promise<boolean> {
-  try { return (await readRoomMessages(room)).some((item) => item.from === identity.did && item.text === body); }
-  catch { return false; }
+  const messages = await readRoomMessages(room);
+  return messages.some((item) => item.from === identity.did && item.text === body);
 }
 
-async function waitForExactActivity(identity: StoredIdentity, room: string, body: string, attempts = 10, delayMs = 2000) {
+async function waitForExactActivity(identity: StoredIdentity, room: string, body: string, attempts = 10, delayMs = 1500) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (await hasExactActivity(identity, room, body)) return true;
+    try {
+      if (await hasExactActivity(identity, room, body)) return true;
+    } catch {
+      // Readback can fail transiently while the write has already landed.
+    }
     if (attempt < attempts - 1) await wait(delayMs);
   }
   return false;
 }
 
+function isSystemProof(text: string | undefined) {
+  return Boolean(text?.startsWith("technocore-profile-v1") || text?.startsWith("technocore-builder-proof-v1"));
+}
+
 export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
-  const targetRoom = room.startsWith("mb-p-") ? FIRST_ACTIVITY_ROOM : room;
   const body = cleanLine(text);
+  const onboardingActivity = room.startsWith("mb-p-");
+  const targetRoom = onboardingActivity ? publicProofRoom(await fingerprint(identity.did)) : room;
 
-  if (targetRoom === FIRST_ACTIVITY_ROOM && await hasExactActivity(identity, targetRoom, body)) return "already-confirmed";
+  if (onboardingActivity) {
+    try {
+      if (await hasExactActivity(identity, targetRoom, body)) return "already-confirmed";
+    } catch {
+      // Continue to the write attempt if the preflight read is temporarily unavailable.
+    }
+  }
 
-  let writeResponse = "";
+  let writeResult = "";
   let writeError: unknown = null;
-  try { writeResponse = await sendSignedMessageToRoom(identity, targetRoom, body); }
+  try { writeResult = await sendSignedMessageToRoom(identity, targetRoom, body); }
   catch (error) { writeError = error; }
 
-  if (targetRoom === FIRST_ACTIVITY_ROOM) {
+  if (onboardingActivity) {
     const confirmed = await waitForExactActivity(identity, targetRoom, body);
-    if (confirmed) return writeError ? "confirmed-after-error" : (writeResponse || "confirmed");
-    const raw = writeError instanceof Error ? writeError.message : "Technocore accepted the request but the activity was not visible in lobby before verification timed out.";
+    if (confirmed) return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
+    const raw = writeError instanceof Error ? writeError.message : "read-back confirmation did not arrive";
     throw new Error(`ACTIVITY_VERIFY_PENDING: ${raw}`);
   }
 
   if (writeError) throw writeError;
-  return writeResponse;
+  return writeResult;
 }
 
-export async function hasVerifiableActivity(identity: StoredIdentity, room = FIRST_ACTIVITY_ROOM): Promise<boolean> {
-  try { return (await readRoomMessages(room)).some((item) => item.from === identity.did); }
-  catch { return false; }
-}
-
-export async function publishVerifiableActivity(identity: StoredIdentity, text: string, room = FIRST_ACTIVITY_ROOM): Promise<ActivityPublishResult> {
-  const body = cleanLine(text);
-  if (await hasExactActivity(identity, room, body)) return "existing";
-  let writeError: unknown = null;
-  try { await sendSignedMessageToRoom(identity, room, body); }
-  catch (error) { writeError = error; }
-  const confirmed = await waitForExactActivity(identity, room, body);
-  if (confirmed) return writeError ? "confirmed-after-error" : "published";
-  const raw = writeError instanceof Error ? writeError.message : "Activity was not visible before verification timed out.";
-  throw new Error(`ACTIVITY_VERIFY_PENDING: ${raw}`);
+export async function hasVerifiableActivity(identity: StoredIdentity): Promise<boolean> {
+  const fingerprintValue = await fingerprint(identity.did);
+  const messages = await readRoomMessages(publicProofRoom(fingerprintValue));
+  return messages.some((item) => item.from === identity.did && !isSystemProof(item.text));
 }
 
 function profileIndexMatches(raw: string, identity: StoredIdentity, agent: string, mailbox: string): boolean {
