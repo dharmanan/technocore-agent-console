@@ -2,6 +2,19 @@ import { signText, type StoredIdentity } from "./identity";
 
 export const TECHNOCORE_ORIGIN = "https://technocore.chat";
 
+export type ProfilePublishStage =
+  | "checking-index"
+  | "writing-index"
+  | "index-confirmed"
+  | "checking-proof"
+  | "writing-proof"
+  | "proof-confirmed";
+
+export type ProfilePublishResult = {
+  index: "existing" | "published" | "confirmed-after-error";
+  proof: "existing" | "published" | "confirmed-after-error";
+};
+
 export function cleanName(value: string): string {
   const result = value.trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(result)) {
@@ -55,13 +68,83 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   return proxyGet(`/r/${encodeSegment(room)}/say-signed/${encodeSegment(identity.did)}/${encodeSegment(sig)}/${nonce}/${encodeURIComponent(body)}`);
 }
 
-export async function publishProfile(identity: StoredIdentity, agentName: string, mailbox: string): Promise<string> {
+function profileIndexMatches(raw: string, identity: StoredIdentity, agent: string, mailbox: string): boolean {
+  return raw.includes(identity.did) && raw.includes(`agent:${agent}`) && raw.includes(`mailbox:${mailbox}`);
+}
+
+function profileProofMatches(raw: string, identity: StoredIdentity, agent: string, mailbox: string): boolean {
+  return raw.includes(identity.did) && raw.includes("technocore-profile-v1") && raw.includes(`agent:${agent}`) && raw.includes(`mailbox:${mailbox}`);
+}
+
+async function canReadMatchingIndex(path: string, identity: StoredIdentity, agent: string, mailbox: string): Promise<boolean> {
+  try {
+    return profileIndexMatches(await proxyGet(path), identity, agent, mailbox);
+  } catch {
+    return false;
+  }
+}
+
+async function canReadMatchingProof(path: string, identity: StoredIdentity, agent: string, mailbox: string): Promise<boolean> {
+  try {
+    return profileProofMatches(await proxyGet(path), identity, agent, mailbox);
+  } catch {
+    return false;
+  }
+}
+
+export async function publishProfile(
+  identity: StoredIdentity,
+  agentName: string,
+  mailbox: string,
+  onStage?: (stage: ProfilePublishStage) => void,
+): Promise<ProfilePublishResult> {
   const agent = cleanName(agentName);
   const fingerprintValue = await fingerprint(identity.did);
+  const notePath = didNotePath(fingerprintValue);
+  const proofPath = publicProofPath(fingerprintValue);
   const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`, 4096);
-  const noteResult = await proxyGet(`${didNotePath(fingerprintValue)}/set/${encodeURIComponent(value)}`);
-  await sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
-  return noteResult;
+
+  onStage?.("checking-index");
+  let indexState: ProfilePublishResult["index"] = "existing";
+  const indexExists = await canReadMatchingIndex(notePath, identity, agent, mailbox);
+
+  if (!indexExists) {
+    onStage?.("writing-index");
+    try {
+      await proxyGet(`${notePath}/set/${encodeURIComponent(value)}`);
+      indexState = "published";
+    } catch (error) {
+      const confirmed = await canReadMatchingIndex(notePath, identity, agent, mailbox);
+      if (!confirmed) {
+        const raw = error instanceof Error ? error.message : "Unknown Technocore error";
+        throw new Error(`PROFILE_INDEX_PENDING: ${raw}`);
+      }
+      indexState = "confirmed-after-error";
+    }
+  }
+
+  onStage?.("index-confirmed");
+  onStage?.("checking-proof");
+  let proofState: ProfilePublishResult["proof"] = "existing";
+  const proofExists = await canReadMatchingProof(proofPath, identity, agent, mailbox);
+
+  if (!proofExists) {
+    onStage?.("writing-proof");
+    try {
+      await sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
+      proofState = "published";
+    } catch (error) {
+      const confirmed = await canReadMatchingProof(proofPath, identity, agent, mailbox);
+      if (!confirmed) {
+        const raw = error instanceof Error ? error.message : "Unknown Technocore error";
+        throw new Error(`PROFILE_PROOF_PENDING: ${raw}`);
+      }
+      proofState = "confirmed-after-error";
+    }
+  }
+
+  onStage?.("proof-confirmed");
+  return { index: indexState, proof: proofState };
 }
 
 export async function publishContribution(identity: StoredIdentity, agentName: string, url: string, summary: string): Promise<string> {
