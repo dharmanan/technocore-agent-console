@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
   const payload = value.payload;
 
   if (!ROOM_POST_RE.test(path)) {
-    return new NextResponse("Unsupported Technocore POST path.", { status: 400 });
+    return new NextResponse("Unsupported Technocore write path.", { status: 400 });
   }
   if (
     !payload ||
@@ -113,25 +113,35 @@ export async function POST(request: NextRequest) {
     return new NextResponse("Invalid signed message payload.", { status: 400 });
   }
 
+  if (!/^did:key:z[1-9A-HJ-NP-Za-km-z]+$/.test(payload.did)) {
+    return new NextResponse("Invalid did:key value.", { status: 400 });
+  }
+  if (!/^[A-Za-z0-9_-]{80,100}$/.test(payload.sig)) {
+    return new NextResponse("Invalid signature value.", { status: 400 });
+  }
+  if (!/^\d{1,19}$/.test(payload.nonce)) {
+    return new NextResponse("Invalid nonce value.", { status: 400 });
+  }
+  if (!payload.text.trim() || payload.text.length > 4096) {
+    return new NextResponse("Invalid message text.", { status: 400 });
+  }
+
+  const room = path.slice(3);
+  const signedUrl = new URL(
+    `/r/${encodeURIComponent(room)}/say-signed/${encodeURIComponent(payload.did)}/${encodeURIComponent(payload.sig)}/${encodeURIComponent(payload.nonce)}/${encodeURIComponent(payload.text)}`,
+    ORIGIN,
+  );
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), WRITE_TIMEOUT_MS);
   let upstreamStatus = 504;
-  let upstreamText = "Technocore write did not finish in time.";
+  let upstreamText = "Technocore signed write did not finish in time.";
   let upstreamCompleted = false;
 
   try {
-    const response = await fetch(`${ORIGIN}${path}`, {
-      method: "POST",
-      headers: {
-        Accept: "text/plain, application/json;q=0.9",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        did: payload.did,
-        sig: payload.sig,
-        nonce: payload.nonce,
-        text: payload.text,
-      }),
+    const response = await fetch(signedUrl, {
+      method: "GET",
+      headers: { Accept: "text/plain, application/json;q=0.9" },
       cache: "no-store",
       signal: controller.signal,
     });
@@ -149,18 +159,23 @@ export async function POST(request: NextRequest) {
 
   const confirmed = await waitForRoomReadback(path, payload.did, payload.text);
   if (confirmed) {
-    return new NextResponse(upstreamCompleted && upstreamStatus >= 200 && upstreamStatus < 300 ? upstreamText || "confirmed" : "confirmed-after-upstream-delay", {
-      status: 200,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
+    return new NextResponse(
+      upstreamCompleted && upstreamStatus >= 200 && upstreamStatus < 300
+        ? upstreamText || "confirmed"
+        : "confirmed-after-upstream-delay",
+      {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      },
+    );
   }
 
-  if (upstreamCompleted && upstreamStatus >= 200 && upstreamStatus < 300) {
-    return new NextResponse(upstreamText || "accepted; read-back pending", {
+  if (upstreamCompleted) {
+    return new NextResponse(upstreamText || `Technocore returned ${upstreamStatus}`, {
       status: upstreamStatus,
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
 
-  return new NextResponse(upstreamText, { status: upstreamStatus });
+  return timeoutResponse("write");
 }
