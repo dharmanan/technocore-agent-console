@@ -11,6 +11,7 @@ export type StoredIdentity = {
 };
 
 const STORAGE_KEY = "technocore-agent-console.identity.v1";
+const IDENTITY_EVENT = "technocore-identity-changed";
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function fromBase64Url(value: string): Uint8Array {
@@ -46,6 +47,10 @@ function didFromJwk(publicKeyJwk: JsonWebKey): string {
   return `did:key:z${base58btc(multicodec)}`;
 }
 
+function broadcastIdentityChange() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(IDENTITY_EVENT));
+}
+
 export async function createIdentity(): Promise<StoredIdentity> {
   if (!crypto.subtle) throw new Error("WebCrypto is unavailable in this browser.");
   const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
@@ -58,6 +63,7 @@ export async function createIdentity(): Promise<StoredIdentity> {
     createdAt: new Date().toISOString(),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+  broadcastIdentityChange();
   return identity;
 }
 
@@ -72,6 +78,7 @@ export function loadIdentity(): StoredIdentity | null {
 
 export function saveIdentity(identity: StoredIdentity) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+  broadcastIdentityChange();
 }
 
 export function withIdentityProfile(identity: StoredIdentity, agentName: string, mailbox: string): StoredIdentity {
@@ -89,6 +96,11 @@ export function withIdentityProfile(identity: StoredIdentity, agentName: string,
 
 export function clearIdentity() {
   localStorage.removeItem(STORAGE_KEY);
+  broadcastIdentityChange();
+}
+
+export function identityChangeEventName() {
+  return IDENTITY_EVENT;
 }
 
 export async function signText(privateKeyJwk: JsonWebKey, canonical: string): Promise<string> {
@@ -105,7 +117,10 @@ export function exportIdentity(identity: StoredIdentity) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `technocore-${identity.did.slice(-10)}.json`;
+  const safeAgent = identity.profile?.agentName?.replace(/[^a-z0-9_-]/gi, "_");
+  anchor.download = safeAgent
+    ? `technocore-agent-${safeAgent}.json`
+    : `technocore-identity-${identity.did.slice(-10)}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
