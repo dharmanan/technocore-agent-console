@@ -37,7 +37,6 @@ export function cleanName(value: string): string {
 }
 
 export function cleanLine(value: string, limit = 4096): string {
-  // Match Technocore's documented single-line sweep before signing.
   const result = value.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}]/gu, " ").trim();
   if (!result) throw new Error("Text cannot be empty.");
   if (result.length > limit) throw new Error(`Text is limited to ${limit} characters.`);
@@ -89,12 +88,21 @@ export async function proxyGet(path: string): Promise<string> {
   return text;
 }
 
-export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
+async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
   const nonce = Date.now().toString();
   const canonical = `${room}|${nonce}|${body}`;
   const sig = await signText(identity.privateKeyJwk, canonical);
   return proxyGet(`/r/${encodeSegment(room)}/say-signed/${encodeSegment(identity.did)}/${encodeSegment(sig)}/${nonce}/${encodeURIComponent(body)}`);
+}
+
+export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
+  // The current onboarding UI historically passed the user's private mailbox here.
+  // Technocore's public onboarding/presence convention uses lobby for a first check-in.
+  // Keep proof-* and all other explicit rooms untouched; only redirect the generated
+  // private mailbox target used by Step 3.
+  const targetRoom = room.startsWith("mb-p-") ? FIRST_ACTIVITY_ROOM : room;
+  return sendSignedMessageToRoom(identity, targetRoom, text);
 }
 
 export async function hasVerifiableActivity(identity: StoredIdentity, room = FIRST_ACTIVITY_ROOM): Promise<boolean> {
@@ -121,15 +129,12 @@ export async function publishVerifiableActivity(
   room = FIRST_ACTIVITY_ROOM,
 ): Promise<ActivityPublishResult> {
   const body = cleanLine(text);
-
   if (await hasExactActivity(identity, room, body)) return "existing";
 
   try {
-    await sendSignedMessage(identity, room, body);
+    await sendSignedMessageToRoom(identity, room, body);
     return "published";
   } catch (error) {
-    // A proxy timeout does not prove that Technocore rejected the write. Read back
-    // before showing failure so the user does not create accidental duplicates.
     if (await hasExactActivity(identity, room, body)) return "confirmed-after-error";
     const raw = error instanceof Error ? error.message : "Unknown Technocore error";
     throw new Error(`ACTIVITY_SEND_PENDING: ${raw}`);
@@ -199,7 +204,7 @@ export async function publishProfile(
   if (!proofExists) {
     onStage?.("writing-proof");
     try {
-      await sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
+      await sendSignedMessageToRoom(identity, publicProofRoom(fingerprintValue), value);
       proofState = "published";
     } catch (error) {
       const confirmed = await canReadMatchingProof(proofPath, identity, agent, mailbox);
@@ -222,7 +227,7 @@ export async function publishContribution(identity: StoredIdentity, agentName: s
   const cleanSummary = cleanLine(summary, 1200);
   const value = cleanLine(`technocore-builder-proof-v1 did:${identity.did} agent:${agent} summary:${cleanSummary} url:${cleanUrl}`, 4096);
   const noteResult = await proxyGet(`${contributionNotePath(fingerprintValue)}/set/${encodeURIComponent(value)}`);
-  await sendSignedMessage(identity, publicProofRoom(fingerprintValue), value);
+  await sendSignedMessageToRoom(identity, publicProofRoom(fingerprintValue), value);
   return noteResult;
 }
 
