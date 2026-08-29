@@ -26,11 +26,38 @@ type EventItem = { id: number; title: string; detail: string; tone: "ok" | "info
 type ActionKey = "identity" | "mailbox" | "profile" | "message" | "contribution";
 type ActionStatus = { state: "pending" | "success" | "error" | "info"; message: string };
 type Lang = "en" | "tr";
+type DraftProfile = { agentName: string; mailbox: string };
 
 const APP_URL = "https://flop-console.vercel.app/";
 const DEFAULT_MESSAGE_EN = "Hello Technocore, my agent is active.";
 const DEFAULT_MESSAGE_TR = "Merhaba Technocore, agent'ım aktif.";
 const DEFAULT_AGENT_NAME = "agent_console";
+
+function draftProfileKey(did: string) {
+  return `technocore-agent-console.draftProfile.${did}`;
+}
+
+function loadDraftProfile(did: string): DraftProfile | null {
+  try {
+    const raw = localStorage.getItem(draftProfileKey(did));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<DraftProfile>;
+    return {
+      agentName: typeof parsed.agentName === "string" && parsed.agentName.trim() ? parsed.agentName : DEFAULT_AGENT_NAME,
+      mailbox: typeof parsed.mailbox === "string" ? parsed.mailbox : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveDraftProfile(did: string, next: DraftProfile) {
+  localStorage.setItem(draftProfileKey(did), JSON.stringify(next));
+}
+
+function clearDraftProfile(did: string) {
+  localStorage.removeItem(draftProfileKey(did));
+}
 
 function friendlyError(error: unknown, tr: boolean): { raw: string; display: string } {
   const raw = error instanceof Error ? error.message : tr ? "Bilinmeyen hata" : "Unknown error";
@@ -39,8 +66,8 @@ function friendlyError(error: unknown, tr: boolean): { raw: string; display: str
     return {
       raw,
       display: tr
-        ? "İmzalı profil kanıtı henüz Technocore'dan geri okunamadı. Yeniden tekrar tekrar göndermene gerek yok. Bağlantı düzeldiğinde tek kez tekrar kontrol et."
-        : "The signed profile proof could not be read back from Technocore yet. Do not resend repeatedly. Check once again when the service is readable.",
+        ? "İmzalı profil kanıtı henüz Technocore'dan geri okunamadı. Aynı profil yeniden gönderilmiyor; bağlantı düzeldiğinde tekrar doğrulayabilirsin."
+        : "The signed profile proof has not been read back from Technocore yet. The same profile is not resent; verify again when the service is readable.",
     };
   }
 
@@ -48,8 +75,8 @@ function friendlyError(error: unknown, tr: boolean): { raw: string; display: str
     return {
       raw,
       display: tr
-        ? "Technocore bu işlemi şu anda doğrulayamıyor. Kimliğin ve mailbox'ın bu cihazda korunuyor; yeniden tekrar tekrar göndermene gerek yok."
-        : "Technocore cannot verify this action right now. Your identity and mailbox remain stored on this device; do not resend repeatedly.",
+        ? "Technocore bu işlemi şu anda doğrulayamıyor. Kimliğin ve mailbox'ın bu cihazda korunuyor."
+        : "Technocore cannot verify this action right now. Your identity and mailbox remain stored on this device.",
     };
   }
 
@@ -57,8 +84,8 @@ function friendlyError(error: unknown, tr: boolean): { raw: string; display: str
     return {
       raw,
       display: tr
-        ? "Technocore zamanında cevap vermedi. Başarılı varsaymadık. Aynı işlemi art arda tekrarlama; servis okunabilir olduğunda bir kez tekrar kontrol et."
-        : "Technocore did not respond in time. The console did not assume success. Do not repeat the same action rapidly; check once when the service is readable.",
+        ? "Technocore zamanında cevap vermedi. Başarılı varsaymadık. Aynı işlemi art arda tekrarlama."
+        : "Technocore did not respond in time. The console did not assume success. Do not repeat the same action rapidly.",
     };
   }
 
@@ -145,13 +172,17 @@ export default function Home() {
     if (current?.profile) {
       setAgentName(current.profile.agentName);
       setMailbox(current.profile.mailbox);
-      localStorage.setItem("technocore-agent-console.agentName", current.profile.agentName);
-      localStorage.setItem("technocore-agent-console.mailbox", current.profile.mailbox);
+      saveDraftProfile(current.did, {
+        agentName: current.profile.agentName,
+        mailbox: current.profile.mailbox,
+      });
+    } else if (current) {
+      const draft = loadDraftProfile(current.did);
+      setAgentName(draft?.agentName || DEFAULT_AGENT_NAME);
+      setMailbox(draft?.mailbox || "");
     } else {
-      const savedAgentName = localStorage.getItem("technocore-agent-console.agentName");
-      if (savedAgentName) setAgentName(savedAgentName);
-      const savedMailbox = localStorage.getItem("technocore-agent-console.mailbox");
-      if (savedMailbox) setMailbox(savedMailbox);
+      setAgentName(DEFAULT_AGENT_NAME);
+      setMailbox("");
     }
 
     proxyGet("/healthz").then(() => setServiceOnline(true)).catch(() => setServiceOnline(false));
@@ -251,9 +282,8 @@ export default function Home() {
     setStatus("profile", { state: "pending", message: tx(en, turkish) });
   }
 
-  function resetLocalProfileState() {
-    localStorage.removeItem("technocore-agent-console.agentName");
-    localStorage.removeItem("technocore-agent-console.mailbox");
+  function resetLocalProfileState(did?: string) {
+    if (did) clearDraftProfile(did);
     setAgentName(DEFAULT_AGENT_NAME);
     setMailbox("");
     setProfilePublished(false);
@@ -266,9 +296,12 @@ export default function Home() {
       tx("Creating your private agent identity in this browser…", "Sana özel agent kimliği bu tarayıcıda oluşturuluyor…"),
       tx("Your identity key is ready. You can make an emergency key backup now, or finish step 2 for a full agent backup.", "Kimlik anahtarın hazır. İstersen şimdi acil durum anahtar yedeğini alabilir, tam agent yedeği için 2. adımı tamamlayabilirsin."),
       async () => {
-        resetLocalProfileState();
+        if (identity) resetLocalProfileState(identity.did);
         const next = await createIdentity();
         setIdentity(next);
+        setAgentName(DEFAULT_AGENT_NAME);
+        setMailbox("");
+        saveDraftProfile(next.did, { agentName: DEFAULT_AGENT_NAME, mailbox: "" });
         addEvent(
           tx("Identity created", "Kimlik oluşturuldu"),
           tx("This is only the cryptographic identity until you verify the agent profile in step 2.", "2. adımda agent profilini doğrulayana kadar bu yalnız kriptografik kimliktir."),
@@ -278,12 +311,13 @@ export default function Home() {
   }
 
   function handleCreateMailbox() {
+    if (!identity) return;
     const next = createMailbox();
     setMailbox(next);
-    localStorage.setItem("technocore-agent-console.mailbox", next);
+    saveDraftProfile(identity.did, { agentName, mailbox: next });
     setStatus("mailbox", {
       state: "success",
-      message: tx("Your message box is ready locally. It becomes part of your agent only after step 2 is verified.", "Mesaj kutun bu cihazda hazır. Ancak 2. adım doğrulandıktan sonra agent profilinin parçası olur."),
+      message: tx("Your message box is ready locally and saved to this DID. Refreshing the page will keep it.", "Mesaj kutun hazır ve bu DID'e bağlı olarak kaydedildi. Sayfayı yenilediğinde kaybolmayacak."),
     });
     addEvent(tx("Message box created", "Mesaj kutusu oluşturuldu"), next, "info");
   }
@@ -295,6 +329,8 @@ export default function Home() {
       return;
     }
 
+    saveDraftProfile(identity.did, { agentName, mailbox });
+
     await run(
       "profile",
       tx("Signing your agent profile and verifying it from Technocore…", "Agent profilin imzalanıyor ve Technocore'dan geri okunarak doğrulanıyor…"),
@@ -305,8 +341,7 @@ export default function Home() {
         const profiledIdentity = withIdentityProfile(identity, normalizedAgent, mailbox);
         setIdentity(profiledIdentity);
         setAgentName(normalizedAgent);
-        localStorage.setItem("technocore-agent-console.agentName", normalizedAgent);
-        localStorage.setItem("technocore-agent-console.mailbox", mailbox);
+        saveDraftProfile(identity.did, { agentName: normalizedAgent, mailbox });
         localStorage.setItem(`technocore-agent-console.progress.${identity.did}.profile`, "true");
         setProfilePublished(true);
         addEvent(
@@ -389,22 +424,28 @@ export default function Home() {
         const value = JSON.parse(String(reader.result)) as StoredIdentity;
         if (!value.did || !value.privateKeyJwk || !value.publicKeyJwk) throw new Error(tx("This is not a valid identity backup.", "Bu dosya geçerli bir kimlik yedeği değil."));
 
-        resetLocalProfileState();
+        if (identity) resetLocalProfileState(identity.did);
         saveIdentity(value);
         setIdentity(value);
         if (value.profile) {
           setAgentName(value.profile.agentName);
           setMailbox(value.profile.mailbox);
-          localStorage.setItem("technocore-agent-console.agentName", value.profile.agentName);
-          localStorage.setItem("technocore-agent-console.mailbox", value.profile.mailbox);
+          saveDraftProfile(value.did, {
+            agentName: value.profile.agentName,
+            mailbox: value.profile.mailbox,
+          });
           localStorage.setItem(`technocore-agent-console.progress.${value.did}.profile`, "true");
           setProfilePublished(true);
+        } else {
+          const draft = loadDraftProfile(value.did);
+          setAgentName(draft?.agentName || DEFAULT_AGENT_NAME);
+          setMailbox(draft?.mailbox || "");
         }
         setStatus("identity", {
           state: "success",
           message: value.profile
             ? tx("Full agent backup restored, including the verified profile and mailbox.", "Tam agent yedeği, doğrulanmış profil ve mailbox ile birlikte geri yüklendi.")
-            : tx("Identity key backup restored. This legacy/key-only backup does not contain a verified agent profile.", "Kimlik anahtarı yedeği geri yüklendi. Bu eski/yalnız anahtar yedeği doğrulanmış agent profili içermez."),
+            : tx("Identity key backup restored. Any local draft for this DID was restored too.", "Kimlik anahtarı yedeği geri yüklendi. Bu DID için yerel taslak varsa o da geri getirildi."),
         });
       } catch (error) {
         const detail = friendlyError(error, tr);
@@ -415,6 +456,11 @@ export default function Home() {
   }
 
   function handleForgetIdentity() {
+    if (identity) {
+      clearDraftProfile(identity.did);
+      localStorage.removeItem(`technocore-agent-console.progress.${identity.did}.profile`);
+      localStorage.removeItem(`technocore-agent-console.progress.${identity.did}.activity`);
+    }
     clearIdentity();
     setIdentity(null);
     resetLocalProfileState();
@@ -422,7 +468,7 @@ export default function Home() {
     setStatuses({});
     setStatus("identity", {
       state: "info",
-      message: tx("Identity and local profile state were removed from this browser. Keep your backup if you want to restore them later.", "Kimlik ve bu cihaza ait profil durumu tarayıcıdan kaldırıldı. Daha sonra geri yüklemek istiyorsan yedeğini sakla."),
+      message: tx("Identity and its local draft profile were removed from this browser. Keep your backup if you want to restore them later.", "Kimlik ve bu DID'e ait yerel taslak profil tarayıcıdan kaldırıldı. Daha sonra geri yüklemek istiyorsan yedeğini sakla."),
     });
   }
 
@@ -476,8 +522,8 @@ export default function Home() {
           {currentStep === 2 && <StartCue label={tx("NEXT STEP", "SONRAKİ ADIM")} />}
           <div className="panelHead"><span>02</span><h2>{tx("Your agent profile", "Agent profilin")}</h2><em>{profilePublished ? tx("VERIFIED", "DOĞRULANDI") : "TECHNOCORE"}</em></div>
           <p className="muted">{tx("Choose the agent name and mailbox that belong to this DID. The profile is complete only after its DID-signed proof can be read back from Technocore.", "Bu DID'e ait agent adını ve mailbox'ı seç. Profil ancak DID ile imzalanmış kanıt Technocore'dan geri okunabildiğinde tamamlanır.")}</p>
-          <label>{tx("Agent name", "Agent adı")}<input value={agentName} onChange={(e) => { const value = e.target.value; setAgentName(value); localStorage.setItem("technocore-agent-console.agentName", value); }} placeholder="my_agent" /></label>
-          <label>{tx("Message box", "Mesaj kutusu")}<div className="inputAction"><input value={mailbox} onChange={(e) => { setMailbox(e.target.value); localStorage.setItem("technocore-agent-console.mailbox", e.target.value); }} placeholder="mb-p-..." /><button onClick={handleCreateMailbox}>{tx("Create", "Oluştur")}</button></div></label>
+          <label>{tx("Agent name", "Agent adı")}<input value={agentName} onChange={(e) => { const value = e.target.value; setAgentName(value); if (identity) saveDraftProfile(identity.did, { agentName: value, mailbox }); }} placeholder="my_agent" /></label>
+          <label>{tx("Message box", "Mesaj kutusu")}<div className="inputAction"><input value={mailbox} onChange={(e) => { const value = e.target.value; setMailbox(value); if (identity) saveDraftProfile(identity.did, { agentName, mailbox: value }); }} placeholder="mb-p-..." /><button onClick={handleCreateMailbox}>{tx("Create", "Oluştur")}</button></div></label>
           <ActionNotice status={statuses.mailbox} tr={tr} />
           <button className="primary full" disabled={!identity || !mailbox || !!busy} onClick={handlePublishProfile}>{busy === "profile" ? tx("Signing and verifying…", "İmzalanıyor ve doğrulanıyor…") : profilePublished ? tx("Verify profile again", "Profili tekrar doğrula") : tx("Sign and verify profile", "Profili imzala ve doğrula")}</button>
           <ActionNotice status={statuses.profile} tr={tr} />
