@@ -14,6 +14,14 @@ export default function SiteFooter() {
 
       <a
         className="githubCredit"
+        href="/live"
+        aria-label="Open live Technocore activity proof"
+      >
+        <span>Live activity ↗</span>
+      </a>
+
+      <a
+        className="githubCredit"
         href="https://github.com/dharmanan/technocore-agent-console"
         target="_blank"
         rel="noreferrer"
