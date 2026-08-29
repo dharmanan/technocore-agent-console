@@ -24,6 +24,8 @@ export type AgentContact = {
   agent: string;
   mailbox: string;
   proofRoom: string;
+  seq?: number | null;
+  ts?: string | null;
 };
 
 export function cleanName(value: string): string {
@@ -152,16 +154,34 @@ function parseProfileProof(text: string | undefined, did: string) {
   return agent && mailbox ? { agent, mailbox } : null;
 }
 
+function newestFirst(a: TechnocoreMessage, b: TechnocoreMessage) {
+  const seqA = typeof a.seq === "number" ? a.seq : -1;
+  const seqB = typeof b.seq === "number" ? b.seq : -1;
+  if (seqA !== seqB) return seqB - seqA;
+  return Date.parse(String(b.ts || "")) - Date.parse(String(a.ts || ""));
+}
+
 export async function resolveAgentContact(didInput: string): Promise<AgentContact> {
   const did = didInput.trim();
   if (!did.startsWith("did:key:") || did.length < 32) throw new Error("CONTACT_DID_INVALID");
   const fingerprintValue = await fingerprint(did);
   const room = publicProofRoom(fingerprintValue);
   const messages = await readRoomMessages(room);
-  const match = [...messages].reverse().find((message) => message.from === did && Boolean(parseProfileProof(message.text, did)));
+  const candidates = messages
+    .filter((message) => message.from === did && Boolean(parseProfileProof(message.text, did)))
+    .sort(newestFirst);
+  const match = candidates[0];
   const profile = match ? parseProfileProof(match.text, did) : null;
   if (!profile) throw new Error("CONTACT_PROFILE_UNVERIFIED");
-  return { did, fingerprint: fingerprintValue, agent: profile.agent, mailbox: profile.mailbox, proofRoom: room };
+  return {
+    did,
+    fingerprint: fingerprintValue,
+    agent: profile.agent,
+    mailbox: profile.mailbox,
+    proofRoom: room,
+    seq: typeof match.seq === "number" ? match.seq : null,
+    ts: match.ts || null,
+  };
 }
 
 export async function readMailbox(mailbox: string): Promise<TechnocoreMessage[]> {
