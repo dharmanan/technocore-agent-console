@@ -15,8 +15,16 @@ export type ProfilePublishResult = {
   proof: "existing" | "published" | "confirmed-after-error";
 };
 
-type RoomMessage = { from?: string; text?: string; seq?: number; ts?: string; nonce?: string };
-type RoomResponse = { messages?: RoomMessage[] } | RoomMessage[];
+export type TechnocoreMessage = { from?: string; text?: string; seq?: number; ts?: string; nonce?: string };
+type RoomResponse = { messages?: TechnocoreMessage[] } | TechnocoreMessage[];
+
+export type AgentContact = {
+  did: string;
+  fingerprint: string;
+  agent: string;
+  mailbox: string;
+  proofRoom: string;
+};
 
 export function cleanName(value: string): string {
   const result = value.trim().toLowerCase();
@@ -34,7 +42,7 @@ export function cleanLine(value: string, limit = 4096): string {
 function encodeSegment(value: string) { return encodeURIComponent(value).replace(/%2F/gi, "%252F"); }
 function wait(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-function parseRoomMessages(raw: string): RoomMessage[] {
+function parseRoomMessages(raw: string): TechnocoreMessage[] {
   try {
     const parsed = JSON.parse(raw) as RoomResponse;
     if (Array.isArray(parsed)) return parsed;
@@ -42,7 +50,7 @@ function parseRoomMessages(raw: string): RoomMessage[] {
   } catch { return []; }
 }
 
-async function readRoomMessages(room: string): Promise<RoomMessage[]> {
+async function readRoomMessages(room: string): Promise<TechnocoreMessage[]> {
   const raw = await proxyGet(`/r/${encodeSegment(room)}?format=json&limit=200&n=${Date.now()}`);
   return parseRoomMessages(raw);
 }
@@ -130,6 +138,42 @@ export async function hasVerifiableActivity(identity: StoredIdentity): Promise<b
   const fingerprintValue = await fingerprint(identity.did);
   const messages = await readRoomMessages(publicProofRoom(fingerprintValue));
   return messages.some((item) => item.from === identity.did && !isSystemProof(item.text));
+}
+
+function parseProfileProof(text: string | undefined, did: string) {
+  if (!text?.startsWith("technocore-profile-v1") || !text.includes(`did:${did}`)) return null;
+  const agent = text.match(/(?:^|\s)agent:([a-z0-9_-]{1,48})(?:\s|$)/)?.[1];
+  const mailbox = text.match(/(?:^|\s)mailbox:(mb-p-[a-zA-Z0-9_-]+)(?:\s|$)/)?.[1];
+  return agent && mailbox ? { agent, mailbox } : null;
+}
+
+export async function resolveAgentContact(didInput: string): Promise<AgentContact> {
+  const did = didInput.trim();
+  if (!did.startsWith("did:key:") || did.length < 32) throw new Error("CONTACT_DID_INVALID");
+  const fingerprintValue = await fingerprint(did);
+  const room = publicProofRoom(fingerprintValue);
+  const messages = await readRoomMessages(room);
+  const match = [...messages].reverse().find((message) => message.from === did && Boolean(parseProfileProof(message.text, did)));
+  const profile = match ? parseProfileProof(match.text, did) : null;
+  if (!profile) throw new Error("CONTACT_PROFILE_UNVERIFIED");
+  return { did, fingerprint: fingerprintValue, agent: profile.agent, mailbox: profile.mailbox, proofRoom: room };
+}
+
+export async function readMailbox(mailbox: string): Promise<TechnocoreMessage[]> {
+  if (!/^mb-p-[a-zA-Z0-9_-]+$/.test(mailbox)) throw new Error("MAILBOX_INVALID");
+  return readRoomMessages(mailbox);
+}
+
+export async function sendDirectMessage(identity: StoredIdentity, recipientMailbox: string, text: string): Promise<"confirmed" | "confirmed-after-error"> {
+  if (!/^mb-p-[a-zA-Z0-9_-]+$/.test(recipientMailbox)) throw new Error("MAILBOX_INVALID");
+  const body = cleanLine(text, 2000);
+  let writeError: unknown = null;
+  try { await sendSignedMessageToRoom(identity, recipientMailbox, body); }
+  catch (error) { writeError = error; }
+  const confirmed = await waitForExactActivity(identity, recipientMailbox, body, 8, 1500);
+  if (confirmed) return writeError ? "confirmed-after-error" : "confirmed";
+  const raw = writeError instanceof Error ? writeError.message : "read-back confirmation did not arrive";
+  throw new Error(`DIRECT_MESSAGE_VERIFY_PENDING: ${raw}`);
 }
 
 function profileIndexMatches(raw: string, identity: StoredIdentity, agent: string, mailbox: string): boolean {
