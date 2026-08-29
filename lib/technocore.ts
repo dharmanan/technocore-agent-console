@@ -4,8 +4,10 @@ export const TECHNOCORE_ORIGIN = "https://technocore.chat";
 const PENDING_ACTIVITY_EVENT = "technocore-pending-activity-changed";
 const PENDING_ACTIVITY_TTL_MS = 90_000;
 const PENDING_PROFILE_TTL_MS = 10 * 60_000;
-const CLIENT_READ_TIMEOUT_MS = 2500;
-const CLIENT_WRITE_TIMEOUT_MS = 4000;
+const DEFAULT_READ_TIMEOUT_MS = 8000;
+const ACTIVITY_READ_TIMEOUT_MS = 5000;
+const PROFILE_READ_TIMEOUT_MS = 2500;
+const CLIENT_WRITE_TIMEOUT_MS = 8000;
 const PROFILE_VERIFY_ATTEMPTS = 3;
 const PROFILE_VERIFY_DELAY_MS = 700;
 
@@ -158,8 +160,8 @@ function parseRoomMessages(raw: string): TechnocoreMessage[] {
   } catch { return []; }
 }
 
-async function readRoomMessages(room: string): Promise<TechnocoreMessage[]> {
-  const raw = await proxyGet(`/r/${encodeSegment(room)}?format=json&limit=200&n=${Date.now()}`);
+async function readRoomMessages(room: string, timeoutMs = DEFAULT_READ_TIMEOUT_MS): Promise<TechnocoreMessage[]> {
+  const raw = await proxyGet(`/r/${encodeSegment(room)}?format=json&limit=200&n=${Date.now()}`, timeoutMs);
   return parseRoomMessages(raw);
 }
 
@@ -182,9 +184,9 @@ export function publicProofPath(fingerprintValue: string): string {
   return `/r/${publicProofRoom(fingerprintValue)}?format=json`;
 }
 
-export async function proxyGet(path: string): Promise<string> {
+export async function proxyGet(path: string, timeoutMs = DEFAULT_READ_TIMEOUT_MS): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CLIENT_READ_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`/api/technocore?path=${encodeURIComponent(path)}`, {
       cache: "no-store",
@@ -195,7 +197,7 @@ export async function proxyGet(path: string): Promise<string> {
     return text;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Technocore read timed out after ${CLIENT_READ_TIMEOUT_MS}ms`);
+      throw new Error(`Technocore read timed out after ${timeoutMs}ms`);
     }
     throw error;
   } finally {
@@ -238,28 +240,35 @@ async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, t
   return proxyPostSigned(room, identity.did, sig, nonce, body);
 }
 
-async function hasExactActivity(identity: StoredIdentity, room: string, body: string): Promise<boolean> {
-  const messages = await readRoomMessages(room);
+async function hasExactActivity(identity: StoredIdentity, room: string, body: string, timeoutMs = ACTIVITY_READ_TIMEOUT_MS): Promise<boolean> {
+  const messages = await readRoomMessages(room, timeoutMs);
   return messages.some((item) => item.from === identity.did && item.text === body);
 }
 
 export async function verifySignedMessage(identity: StoredIdentity, room: string, text: string): Promise<boolean> {
   const body = cleanLine(text);
-  return hasExactActivity(identity, room, body);
+  return hasExactActivity(identity, room, body, ACTIVITY_READ_TIMEOUT_MS);
 }
 
 export async function verifyPendingActivity(identity: StoredIdentity): Promise<boolean> {
   const pending = loadPendingActivity(identity.did);
   if (!pending) return false;
-  const found = await hasExactActivity(identity, pending.room, pending.text);
+  const found = await hasExactActivity(identity, pending.room, pending.text, DEFAULT_READ_TIMEOUT_MS);
   if (found) clearPendingActivity(identity.did);
   return found;
 }
 
-async function waitForExactActivity(identity: StoredIdentity, room: string, body: string, attempts = 10, delayMs = 1500) {
+async function waitForExactActivity(
+  identity: StoredIdentity,
+  room: string,
+  body: string,
+  attempts = 5,
+  delayMs = 1000,
+  readTimeoutMs = ACTIVITY_READ_TIMEOUT_MS,
+) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      if (await hasExactActivity(identity, room, body)) return true;
+      if (await hasExactActivity(identity, room, body, readTimeoutMs)) return true;
     } catch {
       // Readback can fail transiently while the write has already landed.
     }
@@ -281,7 +290,7 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   if (unresolved) {
     let resolved = false;
     try {
-      resolved = await hasExactActivity(identity, unresolved.room, unresolved.text);
+      resolved = await hasExactActivity(identity, unresolved.room, unresolved.text, DEFAULT_READ_TIMEOUT_MS);
     } catch {
       // A read failure must not globally lock this identity from sending a different message.
     }
@@ -296,7 +305,7 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   }
 
   try {
-    if (await hasExactActivity(identity, targetRoom, body)) return "already-confirmed";
+    if (await hasExactActivity(identity, targetRoom, body, ACTIVITY_READ_TIMEOUT_MS)) return "already-confirmed";
   } catch {
     // A transient read failure should not prevent the single write attempt.
   }
@@ -308,7 +317,7 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   try { writeResult = await sendSignedMessageToRoom(identity, targetRoom, body); }
   catch (error) { writeError = error; }
 
-  const confirmed = await waitForExactActivity(identity, targetRoom, body);
+  const confirmed = await waitForExactActivity(identity, targetRoom, body, 5, 1000, ACTIVITY_READ_TIMEOUT_MS);
   if (confirmed) {
     clearPendingActivity(identity.did);
     return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
@@ -371,7 +380,7 @@ export async function resolveAgentContact(didInput: string): Promise<AgentContac
 
 export async function readMailbox(mailbox: string): Promise<TechnocoreMessage[]> {
   if (!/^mb-p-[a-zA-Z0-9_-]+$/.test(mailbox)) throw new Error("MAILBOX_INVALID");
-  return readRoomMessages(mailbox);
+  return readRoomMessages(mailbox, DEFAULT_READ_TIMEOUT_MS);
 }
 
 export async function sendDirectMessage(identity: StoredIdentity, recipientMailbox: string, text: string): Promise<"confirmed" | "confirmed-after-error"> {
@@ -380,7 +389,7 @@ export async function sendDirectMessage(identity: StoredIdentity, recipientMailb
   let writeError: unknown = null;
   try { await sendSignedMessageToRoom(identity, recipientMailbox, body); }
   catch (error) { writeError = error; }
-  const confirmed = await waitForExactActivity(identity, recipientMailbox, body, 8, 1500);
+  const confirmed = await waitForExactActivity(identity, recipientMailbox, body, 5, 1000, ACTIVITY_READ_TIMEOUT_MS);
   if (confirmed) return writeError ? "confirmed-after-error" : "confirmed";
   const raw = writeError instanceof Error ? writeError.message : "read-back confirmation did not arrive";
   throw new Error(`DIRECT_MESSAGE_VERIFY_PENDING: ${raw}`);
@@ -395,11 +404,11 @@ function profileProofMatches(raw: string, identity: StoredIdentity, agent: strin
 }
 
 async function canReadMatchingIndex(path: string, identity: StoredIdentity, agent: string, mailbox: string): Promise<boolean> {
-  try { return profileIndexMatches(await proxyGet(path), identity, agent, mailbox); } catch { return false; }
+  try { return profileIndexMatches(await proxyGet(path, PROFILE_READ_TIMEOUT_MS), identity, agent, mailbox); } catch { return false; }
 }
 
 async function canReadMatchingProof(path: string, identity: StoredIdentity, agent: string, mailbox: string): Promise<boolean> {
-  try { return profileProofMatches(await proxyGet(`${path}&n=${Date.now()}`), identity, agent, mailbox); } catch { return false; }
+  try { return profileProofMatches(await proxyGet(`${path}&n=${Date.now()}`, PROFILE_READ_TIMEOUT_MS), identity, agent, mailbox); } catch { return false; }
 }
 
 export async function verifyProfile(identity: StoredIdentity, agentName: string, mailbox: string): Promise<boolean> {
@@ -434,7 +443,14 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
 
   if (samePending) {
     onStage?.("checking-proof");
-    const confirmed = await waitForExactActivity(identity, proofRoom, value, PROFILE_VERIFY_ATTEMPTS, PROFILE_VERIFY_DELAY_MS);
+    const confirmed = await waitForExactActivity(
+      identity,
+      proofRoom,
+      value,
+      PROFILE_VERIFY_ATTEMPTS,
+      PROFILE_VERIFY_DELAY_MS,
+      PROFILE_READ_TIMEOUT_MS,
+    );
     if (confirmed) {
       clearPendingProfile(identity.did);
       onStage?.("proof-confirmed");
@@ -457,7 +473,7 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
   try {
     if (!await canReadMatchingIndex(notePath, identity, agent, mailbox)) {
       onStage?.("writing-index");
-      await proxyGet(`${notePath}/set/${encodeURIComponent(value)}`);
+      await proxyGet(`${notePath}/set/${encodeURIComponent(value)}`, PROFILE_READ_TIMEOUT_MS);
       indexState = "published";
     }
   } catch {
@@ -475,7 +491,14 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
     writeError = error;
   }
 
-  const confirmed = await waitForExactActivity(identity, proofRoom, value, PROFILE_VERIFY_ATTEMPTS, PROFILE_VERIFY_DELAY_MS);
+  const confirmed = await waitForExactActivity(
+    identity,
+    proofRoom,
+    value,
+    PROFILE_VERIFY_ATTEMPTS,
+    PROFILE_VERIFY_DELAY_MS,
+    PROFILE_READ_TIMEOUT_MS,
+  );
   if (confirmed) {
     clearPendingProfile(identity.did);
     onStage?.("proof-confirmed");
