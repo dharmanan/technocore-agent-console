@@ -4,11 +4,14 @@ export const TECHNOCORE_ORIGIN = "https://technocore.chat";
 const PENDING_ACTIVITY_EVENT = "technocore-pending-activity-changed";
 const PENDING_ACTIVITY_TTL_MS = 90_000;
 const PENDING_PROFILE_TTL_MS = 10 * 60_000;
-const DEFAULT_READ_TIMEOUT_MS = 8000;
-const ACTIVITY_READ_TIMEOUT_MS = 5000;
-const PROFILE_READ_TIMEOUT_MS = 2500;
-const PROFILE_VERIFY_ATTEMPTS = 3;
-const PROFILE_VERIFY_DELAY_MS = 700;
+const DEFAULT_READ_TIMEOUT_MS = 16000;
+const ACTIVITY_READ_TIMEOUT_MS = 16000;
+const PROFILE_READ_TIMEOUT_MS = 16000;
+const PROFILE_VERIFY_ATTEMPTS = 20;
+const PROFILE_VERIFY_DELAY_MS = 1500;
+const ACTIVITY_VERIFY_ATTEMPTS = 10;
+const ACTIVITY_VERIFY_DELAY_MS = 1500;
+const DIRECT_MESSAGE_VERIFY_ATTEMPTS = 8;
 
 export type PendingActivity = {
   did: string;
@@ -249,8 +252,8 @@ async function waitForExactActivity(
   identity: StoredIdentity,
   room: string,
   body: string,
-  attempts = 5,
-  delayMs = 1000,
+  attempts = ACTIVITY_VERIFY_ATTEMPTS,
+  delayMs = ACTIVITY_VERIFY_DELAY_MS,
   readTimeoutMs = ACTIVITY_READ_TIMEOUT_MS,
 ) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -270,8 +273,14 @@ function isSystemProof(text: string | undefined) {
 
 export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
+  const requestedRoom = room.trim();
+  if (!requestedRoom) throw new Error("ACTIVITY_ROOM_REQUIRED");
+
   const verifiedMailbox = identity.profile?.mailbox?.trim();
-  const targetRoom = verifiedMailbox || room;
+  if (verifiedMailbox && requestedRoom !== verifiedMailbox) {
+    throw new Error("PROFILE_MAILBOX_MISMATCH: verify the current mailbox in step 2 before sending activity");
+  }
+  const targetRoom = verifiedMailbox || requestedRoom;
   const unresolved = loadPendingActivity(identity.did);
 
   if (unresolved) {
@@ -287,6 +296,8 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
     } else if (unresolved.room === targetRoom && unresolved.text === body) {
       throw new Error("ACTIVITY_DELIVERY_PENDING: this exact message is still waiting for read-back");
     } else {
+      // A pending record belongs only to that exact room + message pair.
+      // Rotating mailbox or sending a different message must not lock the identity.
       clearPendingActivity(identity.did);
     }
   }
@@ -304,7 +315,7 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   try { writeResult = await sendSignedMessageToRoom(identity, targetRoom, body); }
   catch (error) { writeError = error; }
 
-  const confirmed = await waitForExactActivity(identity, targetRoom, body, 5, 1000, ACTIVITY_READ_TIMEOUT_MS);
+  const confirmed = await waitForExactActivity(identity, targetRoom, body);
   if (confirmed) {
     clearPendingActivity(identity.did);
     return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
@@ -376,7 +387,14 @@ export async function sendDirectMessage(identity: StoredIdentity, recipientMailb
   let writeError: unknown = null;
   try { await sendSignedMessageToRoom(identity, recipientMailbox, body); }
   catch (error) { writeError = error; }
-  const confirmed = await waitForExactActivity(identity, recipientMailbox, body, 5, 1000, ACTIVITY_READ_TIMEOUT_MS);
+  const confirmed = await waitForExactActivity(
+    identity,
+    recipientMailbox,
+    body,
+    DIRECT_MESSAGE_VERIFY_ATTEMPTS,
+    ACTIVITY_VERIFY_DELAY_MS,
+    ACTIVITY_READ_TIMEOUT_MS,
+  );
   if (confirmed) return writeError ? "confirmed-after-error" : "confirmed";
   const raw = writeError instanceof Error ? writeError.message : "read-back confirmation did not arrive";
   throw new Error(`DIRECT_MESSAGE_VERIFY_PENDING: ${raw}`);
