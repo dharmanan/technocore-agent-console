@@ -3,6 +3,11 @@ export type StoredIdentity = {
   publicKeyJwk: JsonWebKey;
   privateKeyJwk: JsonWebKey;
   createdAt: string;
+  profile?: {
+    agentName: string;
+    mailbox: string;
+    verifiedAt?: string;
+  };
 };
 
 const STORAGE_KEY = "technocore-agent-console.identity.v1";
@@ -46,7 +51,7 @@ export async function createIdentity(): Promise<StoredIdentity> {
   const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
   const publicKeyJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
   const privateKeyJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
-  const identity = {
+  const identity: StoredIdentity = {
     did: didFromJwk(publicKeyJwk),
     publicKeyJwk,
     privateKeyJwk,
@@ -67,6 +72,19 @@ export function loadIdentity(): StoredIdentity | null {
 
 export function saveIdentity(identity: StoredIdentity) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+}
+
+export function withIdentityProfile(identity: StoredIdentity, agentName: string, mailbox: string): StoredIdentity {
+  const next: StoredIdentity = {
+    ...identity,
+    profile: {
+      agentName,
+      mailbox,
+      verifiedAt: new Date().toISOString(),
+    },
+  };
+  saveIdentity(next);
+  return next;
 }
 
 export function clearIdentity() {
