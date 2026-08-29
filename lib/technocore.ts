@@ -4,6 +4,10 @@ export const TECHNOCORE_ORIGIN = "https://technocore.chat";
 const PENDING_ACTIVITY_EVENT = "technocore-pending-activity-changed";
 const PENDING_ACTIVITY_TTL_MS = 90_000;
 const PENDING_PROFILE_TTL_MS = 10 * 60_000;
+const CLIENT_READ_TIMEOUT_MS = 2500;
+const CLIENT_WRITE_TIMEOUT_MS = 4000;
+const PROFILE_VERIFY_ATTEMPTS = 3;
+const PROFILE_VERIFY_DELAY_MS = 700;
 
 export type PendingActivity = {
   did: string;
@@ -179,25 +183,51 @@ export function publicProofPath(fingerprintValue: string): string {
 }
 
 export async function proxyGet(path: string): Promise<string> {
-  const response = await fetch(`/api/technocore?path=${encodeURIComponent(path)}`, { cache: "no-store" });
-  const text = await response.text();
-  if (!response.ok) throw new Error(text || `Technocore returned ${response.status}`);
-  return text;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CLIENT_READ_TIMEOUT_MS);
+  try {
+    const response = await fetch(`/api/technocore?path=${encodeURIComponent(path)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(text || `Technocore returned ${response.status}`);
+    return text;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Technocore read timed out after ${CLIENT_READ_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function proxyPostSigned(room: string, did: string, sig: string, nonce: string, textValue: string): Promise<string> {
-  const response = await fetch("/api/technocore", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    cache: "no-store",
-    body: JSON.stringify({
-      path: `/r/${room}`,
-      payload: { did, sig, nonce, text: textValue },
-    }),
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(text || `Technocore returned ${response.status}`);
-  return text;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CLIENT_WRITE_TIMEOUT_MS);
+  try {
+    const response = await fetch("/api/technocore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
+      body: JSON.stringify({
+        path: `/r/${room}`,
+        payload: { did, sig, nonce, text: textValue },
+      }),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(text || `Technocore returned ${response.status}`);
+    return text;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Technocore write timed out after ${CLIENT_WRITE_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, text: string): Promise<string> {
@@ -404,7 +434,7 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
 
   if (samePending) {
     onStage?.("checking-proof");
-    const confirmed = await waitForExactActivity(identity, proofRoom, value, 30, 2000);
+    const confirmed = await waitForExactActivity(identity, proofRoom, value, PROFILE_VERIFY_ATTEMPTS, PROFILE_VERIFY_DELAY_MS);
     if (confirmed) {
       clearPendingProfile(identity.did);
       onStage?.("proof-confirmed");
@@ -445,7 +475,7 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
     writeError = error;
   }
 
-  const confirmed = await waitForExactActivity(identity, proofRoom, value, 30, 2000);
+  const confirmed = await waitForExactActivity(identity, proofRoom, value, PROFILE_VERIFY_ATTEMPTS, PROFILE_VERIFY_DELAY_MS);
   if (confirmed) {
     clearPendingProfile(identity.did);
     onStage?.("proof-confirmed");
