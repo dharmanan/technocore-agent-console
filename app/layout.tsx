@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "./live-activity-overrides.css";
 import SiteFooter from "./SiteFooter";
+import ActivityStateSync from "./ActivityStateSync";
 
 export const metadata: Metadata = {
   title: "Technocore Agent Console",
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
+        <ActivityStateSync />
         {children}
         <SiteFooter />
       </body>
