@@ -2,6 +2,7 @@ import { signText, type StoredIdentity } from "./identity";
 
 export const TECHNOCORE_ORIGIN = "https://technocore.chat";
 const PENDING_ACTIVITY_EVENT = "technocore-pending-activity-changed";
+const PENDING_ACTIVITY_TTL_MS = 90_000;
 
 export type PendingActivity = {
   did: string;
@@ -48,13 +49,24 @@ export function pendingActivityEventName() {
   return PENDING_ACTIVITY_EVENT;
 }
 
+function pendingActivityAgeMs(value: PendingActivity): number {
+  const attemptedAt = Date.parse(value.attemptedAt);
+  return Number.isFinite(attemptedAt) ? Math.max(0, Date.now() - attemptedAt) : Number.POSITIVE_INFINITY;
+}
+
 export function loadPendingActivity(did: string): PendingActivity | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(pendingActivityKey(did));
     if (!raw) return null;
     const value = JSON.parse(raw) as PendingActivity;
-    return value?.did === did && value.room && value.text ? value : null;
+    if (!(value?.did === did && value.room && value.text)) return null;
+    if (pendingActivityAgeMs(value) > PENDING_ACTIVITY_TTL_MS) {
+      localStorage.removeItem(pendingActivityKey(did));
+      broadcastPendingActivityChange();
+      return null;
+    }
+    return value;
   } catch {
     return null;
   }
@@ -188,25 +200,24 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   const body = cleanLine(text);
   const verifiedMailbox = identity.profile?.mailbox?.trim();
   const targetRoom = verifiedMailbox || room;
-
-  if (verifiedMailbox && room !== verifiedMailbox) {
-    // Step-three activity belongs to the mailbox that was cryptographically bound
-    // into the verified profile. Never allow stale React/localStorage mailbox state
-    // to redirect a signed activity to an older room.
-    room = verifiedMailbox;
-  }
-
   const unresolved = loadPendingActivity(identity.did);
 
   if (unresolved) {
+    let resolved = false;
     try {
-      const resolved = await hasExactActivity(identity, unresolved.room, unresolved.text);
-      if (resolved) clearPendingActivity(identity.did);
-      else if (unresolved.room === targetRoom && unresolved.text === body) throw new Error("ACTIVITY_DELIVERY_PENDING: previous attempt is still waiting for read-back");
-      else throw new Error("ACTIVITY_PENDING_EXISTS: verify the previous delivery before sending another activity");
-    } catch (error) {
-      if (error instanceof Error && (error.message.startsWith("ACTIVITY_DELIVERY_PENDING") || error.message.startsWith("ACTIVITY_PENDING_EXISTS"))) throw error;
-      throw new Error("ACTIVITY_PENDING_EXISTS: the previous delivery could not be checked yet; do not send another activity");
+      resolved = await hasExactActivity(identity, unresolved.room, unresolved.text);
+    } catch {
+      // A read failure must not globally lock this identity from sending a different message.
+    }
+
+    if (resolved) {
+      clearPendingActivity(identity.did);
+    } else if (unresolved.room === targetRoom && unresolved.text === body) {
+      throw new Error("ACTIVITY_DELIVERY_PENDING: this exact message is still waiting for read-back");
+    } else {
+      // Pending delivery is scoped to one exact message, not to the whole identity.
+      // A different message is allowed to proceed and replaces the old local pending marker.
+      clearPendingActivity(identity.did);
     }
   }
 
