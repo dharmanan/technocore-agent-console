@@ -4,6 +4,7 @@ import "./live-activity-overrides.css";
 import SiteFooter from "./SiteFooter";
 import ActivityStateSync from "./ActivityStateSync";
 import ProfileStateSync from "./ProfileStateSync";
+import ProfileRecoveryNotice from "./ProfileRecoveryNotice";
 
 export const metadata: Metadata = {
   title: "Technocore Agent Console",
@@ -19,8 +20,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
-        <ProfileStateSync />
         <ActivityStateSync />
+        <ProfileStateSync />
+        <ProfileRecoveryNotice />
         {children}
         <SiteFooter />
       </body>
