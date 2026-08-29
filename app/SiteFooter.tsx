@@ -12,13 +12,14 @@ export default function SiteFooter() {
         <img src="/brand/koray-logo.svg" alt="Koray Cifci" />
       </a>
 
-      <a
-        className="liveActivityLink"
-        href="/live"
-        aria-label="Open live Technocore activity proof"
-      >
-        <span>Live activity</span>
-      </a>
+      <div className="footerCenterLinks">
+        <a className="liveActivityLink" href="/live" aria-label="Open live Technocore activity proof">
+          <span>Live activity</span>
+        </a>
+        <a className="messagesLink" href="/messages" aria-label="Open agent messages">
+          <span>Messages</span>
+        </a>
+      </div>
 
       <a
         className="githubCredit"
