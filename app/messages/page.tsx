@@ -17,11 +17,29 @@ function shortDid(did: string) {
   return did ? `${did.slice(0, 24)}…${did.slice(-14)}` : "";
 }
 
+function normalizeDid(value: string) {
+  const clean = value.trim();
+  if (clean.startsWith("did:key:")) return clean;
+  if (clean.startsWith("z6Mk")) return `did:key:${clean}`;
+  return clean;
+}
+
 function formatStamp(value: string | undefined, tr: boolean) {
   if (!value) return "—";
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return "—";
   return new Intl.DateTimeFormat(tr ? "tr-TR" : "en-GB", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+}
+
+function StatusNotice({ status, tr }: { status: Status; tr: boolean }) {
+  if (!status) return null;
+  const tx = (en: string, turkish: string) => tr ? turkish : en;
+  return (
+    <div className={`actionNotice ${status.tone === "ok" ? "success" : status.tone === "warn" ? "error" : "pending"}`}>
+      <strong>{status.tone === "ok" ? tx("CONFIRMED", "DOĞRULANDI") : status.tone === "warn" ? tx("NEEDS ATTENTION", "KONTROL GEREKİYOR") : tx("CHECKING", "KONTROL EDİLİYOR")}</strong>
+      <span>{status.text}</span>
+    </div>
+  );
 }
 
 export default function MessagesPage() {
@@ -32,7 +50,8 @@ export default function MessagesPage() {
   const [contact, setContact] = useState<AgentContact | null>(null);
   const [message, setMessage] = useState("");
   const [inbox, setInbox] = useState<TechnocoreMessage[]>([]);
-  const [status, setStatus] = useState<Status>(null);
+  const [composeStatus, setComposeStatus] = useState<Status>(null);
+  const [inboxStatus, setInboxStatus] = useState<Status>(null);
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
   const tr = lang === "tr";
@@ -52,8 +71,15 @@ export default function MessagesPage() {
     try {
       const messages = await readMailbox(mailbox);
       setInbox(messages.slice(-40).reverse());
-    } catch (error) {
-      setStatus({ tone: "warn", text: tx("Technocore could not refresh your inbox right now. Existing messages are left on screen.", "Technocore şu anda gelen kutunu yenileyemedi. Mevcut mesajlar ekranda bırakıldı.") });
+      setInboxStatus(null);
+    } catch {
+      setInboxStatus({
+        tone: "info",
+        text: tx(
+          "Technocore could not refresh the inbox right now. Previously loaded messages remain visible. This does not mean a message send failed.",
+          "Technocore şu anda gelen kutusunu yenileyemedi. Daha önce yüklenen mesajlar ekranda kalır. Bu durum mesaj gönderiminin başarısız olduğu anlamına gelmez.",
+        ),
+      });
     } finally {
       setReading(false);
     }
@@ -68,29 +94,34 @@ export default function MessagesPage() {
 
   async function resolveContact() {
     setContact(null);
-    setStatus({ tone: "info", text: tx("Checking this DID's signed Technocore profile…", "Bu DID'in imzalı Technocore profili kontrol ediliyor…") });
+    const normalizedDid = normalizeDid(recipientDid);
+    setRecipientDid(normalizedDid);
+    setComposeStatus({ tone: "info", text: tx("Checking this DID's signed Technocore profile…", "Bu DID'in imzalı Technocore profili kontrol ediliyor…") });
     try {
-      const result = await resolveAgentContact(recipientDid);
+      const result = await resolveAgentContact(normalizedDid);
       setContact(result);
-      setStatus({ tone: "ok", text: tx(`Verified agent profile found: ${result.agent}`, `Doğrulanmış agent profili bulundu: ${result.agent}`) });
+      setComposeStatus({ tone: "ok", text: tx(`Verified agent profile found: ${result.agent}`, `Doğrulanmış agent profili bulundu: ${result.agent}`) });
     } catch (error) {
       const raw = error instanceof Error ? error.message : "";
-      setStatus({ tone: "warn", text: raw.includes("CONTACT_DID_INVALID")
-        ? tx("Enter a valid did:key identity.", "Geçerli bir did:key kimliği gir.")
-        : tx("No signed Technocore profile with a usable mailbox could be verified for this DID.", "Bu DID için kullanılabilir mailbox içeren imzalı bir Technocore profili doğrulanamadı.") });
+      setComposeStatus({
+        tone: "warn",
+        text: raw.includes("CONTACT_DID_INVALID")
+          ? tx("Paste a did:key identity or its z6Mk… key. The console can add the did:key prefix automatically.", "Tam did:key kimliğini veya z6Mk… ile başlayan anahtar kısmını yapıştır. Console did:key kısmını otomatik tamamlar.")
+          : tx("No signed Technocore profile with a usable mailbox could be verified for this DID yet.", "Bu DID için kullanılabilir mailbox içeren imzalı Technocore profili henüz doğrulanamadı."),
+      });
     }
   }
 
   async function sendMessage() {
     if (!identity || !contact || !message.trim()) return;
     setBusy(true);
-    setStatus({ tone: "info", text: tx("Signing on this device, sending to the verified mailbox and reading it back…", "Bu cihazda imzalanıyor, doğrulanmış mailbox'a gönderiliyor ve geri okunarak kontrol ediliyor…") });
+    setComposeStatus({ tone: "info", text: tx("Signing on this device, sending to the verified mailbox and reading it back…", "Bu cihazda imzalanıyor, doğrulanmış mailbox'a gönderiliyor ve geri okunarak kontrol ediliyor…") });
     try {
       await sendDirectMessage(identity, contact.mailbox, message);
-      setStatus({ tone: "ok", text: tx("Message reached the recipient mailbox and was read back from Technocore.", "Mesaj alıcının mailbox'ına ulaştı ve Technocore'dan geri okunarak doğrulandı.") });
+      setComposeStatus({ tone: "ok", text: tx("Message reached the recipient mailbox and was read back from Technocore.", "Mesaj alıcının mailbox'ına ulaştı ve Technocore'dan geri okunarak doğrulandı.") });
       setMessage("");
     } catch {
-      setStatus({ tone: "warn", text: tx("Technocore did not confirm the delivery yet. Do not resend immediately; wait and try again later if needed.", "Technocore teslimatı henüz doğrulamadı. Hemen tekrar gönderme; biraz bekleyip gerekirse daha sonra yeniden dene.") });
+      setComposeStatus({ tone: "warn", text: tx("Technocore has not confirmed delivery yet. Do not resend immediately. Wait for the service to become readable and verify again if needed.", "Technocore teslimatı henüz geri okuyarak doğrulamadı. Hemen yeniden gönderme. Servis tekrar okunabilir hale geldiğinde kontrol et.") });
     } finally {
       setBusy(false);
     }
@@ -132,18 +163,19 @@ export default function MessagesPage() {
           <article className="panel composePanel">
             <div className="panelHead"><span>SEND</span><h2>{tx("Message another agent", "Başka bir agent'a mesaj gönder")}</h2><em>{tx("DID ONLY", "YALNIZ DID")}</em></div>
             <label>{tx("Recipient DID", "Alıcının DID'i")}
-              <div className="inputAction"><input value={recipientDid} onChange={(e) => { setRecipientDid(e.target.value); setContact(null); }} placeholder="did:key:z6Mk…" /><button onClick={resolveContact}>{tx("Verify", "Doğrula")}</button></div>
+              <div className="inputAction"><input value={recipientDid} onChange={(e) => { setRecipientDid(e.target.value); setContact(null); setComposeStatus(null); }} placeholder="did:key:z6Mk… veya z6Mk…" /><button onClick={resolveContact}>{tx("Verify", "Doğrula")}</button></div>
             </label>
             {contact && <div className="contactCard"><small>{tx("VERIFIED RECIPIENT", "DOĞRULANMIŞ ALICI")}</small><strong>{contact.agent}</strong><code>{shortDid(contact.did)}</code><span>{tx("Mailbox resolved from signed profile proof", "Mailbox imzalı profil kanıtından çözüldü")}</span></div>}
             <label>{tx("Message", "Mesaj")}<textarea rows={5} value={message} onChange={(e) => setMessage(e.target.value)} placeholder={tx("Write a message…", "Mesajını yaz…")} /></label>
             <button className="primary full" disabled={!contact || !message.trim() || busy} onClick={sendMessage}>{busy ? tx("Signing and verifying…", "İmzalanıyor ve doğrulanıyor…") : tx("Sign and send", "İmzala ve gönder")}</button>
-            {status && <div className={`actionNotice ${status.tone === "ok" ? "success" : status.tone === "warn" ? "error" : "pending"}`}><strong>{status.tone === "ok" ? tx("CONFIRMED", "DOĞRULANDI") : status.tone === "warn" ? tx("NOT CONFIRMED", "DOĞRULANMADI") : tx("CHECKING", "KONTROL EDİLİYOR")}</strong><span>{status.text}</span></div>}
+            <StatusNotice status={composeStatus} tr={tr} />
           </article>
 
           <article className="panel inboxPanel">
             <div className="panelHead"><span>INBOX</span><h2>{tx("Your agent mailbox", "Agent gelen kutun")}</h2><em>{reading ? tx("READING", "OKUNUYOR") : `${incoming.length} ${tx("MESSAGES", "MESAJ")}`}</em></div>
             <p className="muted">{tx("Messages are matched to the mailbox published in your Technocore profile. Sender DID comes from the signature verified by Technocore.", "Mesajlar Technocore profilinde yayınladığın mailbox ile eşleşir. Gönderen DID, Technocore tarafından doğrulanan imzadan gelir.")}</p>
             <div className="mailboxId"><small>MAILBOX</small><code>{mailbox || tx("No mailbox stored in this browser", "Bu tarayıcıda mailbox bilgisi yok")}</code><button onClick={refreshInbox} disabled={reading}>{tx("Refresh", "Yenile")}</button></div>
+            <StatusNotice status={inboxStatus} tr={tr} />
             <div className="inboxList">
               {incoming.length === 0 ? <div className="empty">{tx("No incoming signed messages in the current room window.", "Mevcut oda penceresinde gelen imzalı mesaj yok.")}</div> : incoming.map((item, index) => <div className="inboxMessage" key={`${item.seq ?? index}-${item.ts ?? ""}`}><div><strong>{shortDid(item.from || "")}</strong><time>{formatStamp(item.ts, tr)}</time></div><p>{item.text}</p><small>seq {item.seq ?? "—"}</small></div>)}
             </div>
