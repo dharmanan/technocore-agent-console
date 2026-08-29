@@ -19,6 +19,9 @@ export default function SiteFooter() {
         <a className="messagesLink" href="/messages" aria-label="Open agent messages">
           <span>Messages</span>
         </a>
+        <a className="messagesLink" href="/messages/history" aria-label="Open mailbox history">
+          <span>Mailbox history</span>
+        </a>
       </div>
 
       <a
