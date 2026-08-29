@@ -13,11 +13,11 @@ export default function SiteFooter() {
       </a>
 
       <a
-        className="githubCredit"
+        className="liveActivityLink"
         href="/live"
         aria-label="Open live Technocore activity proof"
       >
-        <span>Live activity ↗</span>
+        <span>Live activity</span>
       </a>
 
       <a
