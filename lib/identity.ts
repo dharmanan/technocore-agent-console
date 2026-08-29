@@ -112,6 +112,26 @@ export async function signText(privateKeyJwk: JsonWebKey, canonical: string): Pr
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function triggerDownload(payload: StoredIdentity, filename: string) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function exportIdentityKey(identity: StoredIdentity) {
+  const keyOnly: StoredIdentity = {
+    did: identity.did,
+    publicKeyJwk: identity.publicKeyJwk,
+    privateKeyJwk: identity.privateKeyJwk,
+    createdAt: identity.createdAt,
+  };
+  triggerDownload(keyOnly, `technocore-identity-key-${identity.did.slice(-10)}.json`);
+}
+
 function exportPayload(identity: StoredIdentity): StoredIdentity {
   if (identity.profile) return identity;
   if (typeof window === "undefined") return identity;
@@ -136,14 +156,10 @@ function exportPayload(identity: StoredIdentity): StoredIdentity {
 
 export function exportIdentity(identity: StoredIdentity) {
   const payload = exportPayload(identity);
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  const safeAgent = payload.profile?.agentName?.replace(/[^a-z0-9_-]/gi, "_");
-  anchor.download = safeAgent
-    ? `technocore-agent-${safeAgent}.json`
-    : `technocore-identity-key-${payload.did.slice(-10)}.json`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  if (!payload.profile) {
+    exportIdentityKey(payload);
+    return;
+  }
+  const safeAgent = payload.profile.agentName.replace(/[^a-z0-9_-]/gi, "_");
+  triggerDownload(payload, `technocore-agent-${safeAgent}.json`);
 }
