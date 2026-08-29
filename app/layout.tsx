@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./live-activity-overrides.css";
+import "./link-state-fixes.css";
 import SiteFooter from "./SiteFooter";
 import ActivityStateSync from "./ActivityStateSync";
 import ProfileStateSync from "./ProfileStateSync";
