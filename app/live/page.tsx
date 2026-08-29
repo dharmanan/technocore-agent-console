@@ -41,6 +41,10 @@ function cleanMessage(value: unknown) {
   return text.length > 220 ? `${text.slice(0, 217)}...` : text;
 }
 
+function latestOf(messages: LiveMessage[]) {
+  return [...messages].sort((a, b) => Date.parse(String(b.ts || "")) - Date.parse(String(a.ts || "")))[0];
+}
+
 export default function LiveActivityPage() {
   const [lang, setLang] = useState<Lang>("en");
   const [identity, setIdentity] = useState<StoredIdentity | null>(null);
@@ -48,7 +52,7 @@ export default function LiveActivityPage() {
   const [fp, setFp] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [connection, setConnection] = useState<"checking" | "ok" | "stale">("checking");
+  const [connection, setConnection] = useState<"checking" | "ok" | "partial" | "stale">("checking");
   const [connectionMessage, setConnectionMessage] = useState("");
   const retryMs = useRef(15000);
   const timerRef = useRef<number | null>(null);
@@ -60,13 +64,23 @@ export default function LiveActivityPage() {
     const next: Lang = saved === "tr" || saved === "en" ? saved : navigator.language.toLowerCase().startsWith("tr") ? "tr" : "en";
     setLang(next);
     setIdentity(loadIdentity());
-    setMailbox(localStorage.getItem("technocore-agent-console.mailbox") || "");
+    const storedIdentity = loadIdentity();
+    setMailbox(storedIdentity?.profile?.mailbox || localStorage.getItem("technocore-agent-console.mailbox") || "");
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     if (!identity) { setFp(""); setLoading(false); return; }
-    fingerprint(identity.did).then((value) => { if (!cancelled) setFp(value); });
+    fingerprint(identity.did).then((value) => {
+      if (cancelled) return;
+      setFp(value);
+      try {
+        const cached = localStorage.getItem(`technocore-agent-console.liveSnapshot.${identity.did}`);
+        if (cached) setSnapshot(JSON.parse(cached) as Snapshot);
+      } catch {
+        // Ignore invalid local cache.
+      }
+    });
     return () => { cancelled = true; };
   }, [identity]);
 
@@ -79,35 +93,59 @@ export default function LiveActivityPage() {
     if (!identity || !fp) return;
     setLoading(true);
     setConnection("checking");
+
+    const proofPromise = proxyGet(`${publicProofPath(fp)}&n=${Date.now()}`);
+    const mailboxPromise = mailbox ? proxyGet(`/r/${encodeURIComponent(mailbox)}?format=json&limit=200&n=${Date.now()}`) : Promise.resolve("");
+    const [proofResult, mailboxResult] = await Promise.allSettled([proofPromise, mailboxPromise]);
+
     try {
-      const proofPromise = proxyGet(`${publicProofPath(fp)}&n=${Date.now()}`);
-      const mailboxPromise = mailbox ? proxyGet(`/r/${encodeURIComponent(mailbox)}?format=json&limit=200&n=${Date.now()}`) : Promise.resolve("");
-      const [proofRaw, mailboxRaw] = await Promise.all([proofPromise, mailboxPromise]);
       const own = (messages: LiveMessage[]) => messages.filter((m) => m.from === identity.did);
-      const proofMessages = own(parseRoom(proofRaw));
-      const activity = proofMessages.filter((m) => !isSystemProof(m));
+      const previous = snapshot;
+
+      const proofMessages = proofResult.status === "fulfilled"
+        ? own(parseRoom(proofResult.value))
+        : [...(previous?.activity || []), ...(previous?.profile || [])];
+      const proofActivity = proofMessages.filter((m) => !isSystemProof(m));
       const profile = proofMessages.filter(isSystemProof);
-      const mailboxMessages = own(parseRoom(mailboxRaw));
-      const all = [...activity, ...profile, ...mailboxMessages].sort((a, b) => Date.parse(String(b.ts || "")) - Date.parse(String(a.ts || "")));
-      const latest = all[0];
-      setSnapshot({
+      const mailboxMessages = mailboxResult.status === "fulfilled"
+        ? own(parseRoom(mailboxResult.value))
+        : (previous?.mailbox || []);
+
+      const all = [...proofActivity, ...profile, ...mailboxMessages];
+      const latest = latestOf(all);
+      const next: Snapshot = {
         checkedAt: new Date().toISOString(),
-        lastSeen: String(latest?.ts || ""),
-        lastSeq: typeof latest?.seq === "number" ? latest.seq : null,
-        activity,
+        lastSeen: String(latest?.ts || previous?.lastSeen || ""),
+        lastSeq: typeof latest?.seq === "number" ? latest.seq : (previous?.lastSeq ?? null),
+        activity: proofActivity,
         profile,
         mailbox: mailboxMessages,
-      });
-      setConnection("ok");
-      setConnectionMessage("");
-      retryMs.current = 15000;
-    } catch (error) {
-      setConnection("stale");
-      setConnectionMessage(tx(
-        "Technocore could not be refreshed right now. The last successfully verified data remains on screen.",
-        "Technocore şu anda yenilenemedi. Son başarıyla doğrulanan veriler ekranda tutuluyor.",
-      ));
-      retryMs.current = Math.min(retryMs.current === 15000 ? 30000 : retryMs.current * 2, 60000);
+      };
+
+      setSnapshot(next);
+      localStorage.setItem(`technocore-agent-console.liveSnapshot.${identity.did}`, JSON.stringify(next));
+
+      const proofOk = proofResult.status === "fulfilled";
+      const mailboxOk = mailboxResult.status === "fulfilled";
+      if (proofOk && mailboxOk) {
+        setConnection("ok");
+        setConnectionMessage("");
+        retryMs.current = 15000;
+      } else if (proofOk || mailboxOk) {
+        setConnection("partial");
+        setConnectionMessage(tx(
+          "One Technocore source is delayed. The source that responded was refreshed; the last verified data from the other source is preserved.",
+          "Technocore kaynaklarından biri gecikiyor. Cevap veren kaynak yenilendi; diğer kaynağın son doğrulanmış verisi korunuyor.",
+        ));
+        retryMs.current = 30000;
+      } else {
+        setConnection("stale");
+        setConnectionMessage(tx(
+          "Technocore could not be refreshed right now. The last successfully verified data remains on screen.",
+          "Technocore şu anda yenilenemedi. Son başarıyla doğrulanan veriler ekranda tutuluyor.",
+        ));
+        retryMs.current = Math.min(retryMs.current === 15000 ? 30000 : retryMs.current * 2, 60000);
+      }
     } finally {
       setLoading(false);
       scheduleNext();
@@ -135,7 +173,8 @@ export default function LiveActivityPage() {
   }
 
   const identityFound = Boolean(snapshot && (snapshot.activity.length || snapshot.profile.length || snapshot.mailbox.length));
-  const hasVerifiedActivity = Boolean(snapshot?.activity.length);
+  const verifiedActivityCount = snapshot ? snapshot.activity.length + snapshot.mailbox.length : 0;
+  const hasVerifiedActivity = verifiedActivityCount > 0;
 
   return (
     <main className="shell liveShell">
@@ -152,12 +191,12 @@ export default function LiveActivityPage() {
         <div className={`livePresence ${identityFound ? "seen" : ""}`}><span className="livePulse"/><div><small>{tx("IDENTITY", "KİMLİK")}</small><strong>{!identity ? tx("No identity loaded", "Yüklü kimlik yok") : loading && !snapshot ? tx("Reading Technocore", "Technocore okunuyor") : identityFound ? tx("DID records found", "DID kayıtları bulundu") : tx("No matching records returned", "Eşleşen kayıt dönmedi")}</strong><code>{shortDid}</code></div></div>
       </section>
 
-      {connection === "stale" && <div className="actionNotice error liveStaleNotice"><strong>{tx("LIVE REFRESH DELAYED", "CANLI YENİLEME GECİKTİ")}</strong><span>{connectionMessage}</span></div>}
+      {(connection === "stale" || connection === "partial") && <div className={`actionNotice ${connection === "stale" ? "error" : "info"} liveStaleNotice`}><strong>{connection === "stale" ? tx("LIVE REFRESH DELAYED", "CANLI YENİLEME GECİKTİ") : tx("PARTIAL REFRESH", "KISMİ YENİLEME")}</strong><span>{connectionMessage}</span></div>}
 
       {!identity ? <section className="panel liveEmpty"><div className="panelHead"><span>LIVE</span><h2>{tx("Identity required", "Kimlik gerekli")}</h2></div><p className="muted">{tx("Create or restore your identity in the console first.", "Önce console'da kimliğini oluştur veya geri yükle.")}</p><a className="liveButton" href="/">{tx("Open console", "Console'u aç")}</a></section> : <>
         <section className="liveMetrics liveMetricsFive">
           <article><small>{tx("IDENTITY", "KİMLİK")}</small><strong>{identityFound ? tx("FOUND", "BULUNDU") : snapshot ? tx("NOT FOUND", "BULUNAMADI") : "—"}</strong><span>{tx("records matching this DID", "bu DID ile eşleşen kayıtlar")}</span></article>
-          <article><small>{tx("VERIFIED ACTIVITY", "DOĞRULANMIŞ AKTİVİTE")}</small><strong>{snapshot ? (hasVerifiedActivity ? tx("YES", "VAR") : tx("NO", "YOK")) : "—"}</strong><span>{snapshot ? `${snapshot.activity.length} ${tx("read back", "geri okundu")}` : tx("waiting for first read", "ilk okuma bekleniyor")}</span></article>
+          <article><small>{tx("VERIFIED ACTIVITY", "DOĞRULANMIŞ AKTİVİTE")}</small><strong>{snapshot ? (hasVerifiedActivity ? tx("YES", "VAR") : tx("NO", "YOK")) : "—"}</strong><span>{snapshot ? `${verifiedActivityCount} ${tx("read back", "geri okundu")}` : tx("waiting for first read", "ilk okuma bekleniyor")}</span></article>
           <article><small>{tx("LAST VERIFIED", "SON DOĞRULAMA")}</small><strong>{snapshot?.lastSeen ? formatStamp(snapshot.lastSeen, tr) : "—"}</strong><span>{snapshot?.lastSeq !== null && snapshot ? `seq ${snapshot.lastSeq}` : tx("no sequence yet", "henüz sequence yok")}</span></article>
           <article><small>{tx("PROFILE PROOF", "PROFİL KANITI")}</small><strong>{snapshot ? snapshot.profile.length : "—"}</strong><span>{tx("profile ownership records", "profil sahiplik kayıtları")}</span></article>
           <article><small>MAILBOX</small><strong>{snapshot ? snapshot.mailbox.length : "—"}</strong><span>{mailbox || tx("no local mailbox reference", "yerel mailbox referansı yok")}</span></article>
@@ -165,7 +204,7 @@ export default function LiveActivityPage() {
 
         <section className="liveGrid">
           <article className="panel liveFeed"><div className="panelHead"><span>TRACE</span><h2>{tx("Technocore records for this DID", "Bu DID için Technocore kayıtları")}</h2><em>{connection === "ok" ? tx("LIVE", "CANLI") : tx("LAST VERIFIED", "SON DOĞRULANAN")}</em></div><p className="muted">{tx("Only records successfully read back from Technocore are shown here.", "Burada yalnız Technocore'dan başarıyla geri okunmuş kayıtlar gösterilir.")}</p>{recent.length === 0 ? <div className="empty">{loading ? tx("Reading Technocore…", "Technocore okunuyor…") : tx("No matching records in the last successful read.", "Son başarılı okumada eşleşen kayıt yok.")}</div> : recent.map((item,index)=><div className="liveMessage" key={`${item.source}-${item.seq ?? index}-${item.ts ?? ""}`}><div className="liveMessageMeta"><span>{sourceLabel(item.source)}</span><b>{item.seq ? `#${item.seq}` : "—"}</b><time>{item.ts ? formatStamp(item.ts,tr) : "—"}</time></div><p>{cleanMessage(item.text)}</p></div>)}</article>
-          <article className="panel liveVerify"><div className="panelHead"><span>VERIFY</span><h2>{tx("What is being verified", "Ne doğrulanıyor?")}</h2><em>READ ONLY</em></div><div className="liveSourceGuide"><strong>{tx("IDENTITY FOUND", "KİMLİK BULUNDU")}</strong><span>{tx("Technocore returned records matching this DID.", "Technocore bu DID ile eşleşen kayıtlar döndürdü.")}</span></div><div className="liveSourceGuide"><strong>{tx("VERIFIED ACTIVITY", "DOĞRULANMIŞ AKTİVİTE")}</strong><span>{tx("A message signed by this DID and read back from its proof room.", "Bu DID ile imzalanmış ve proof odasından geri okunmuş mesaj.")}</span></div><div className="liveSourceGuide"><strong>{tx("CONNECTION", "BAĞLANTI")}</strong><span>{connection === "ok" ? tx("The latest refresh succeeded.", "Son yenileme başarılı.") : connection === "checking" ? tx("Checking Technocore now.", "Technocore şu anda kontrol ediliyor.") : tx("The latest refresh failed; verified data above is preserved.", "Son yenileme başarısız; yukarıdaki doğrulanmış veriler korunuyor.")}</span></div><div className="liveKey"><small>DID</small><code>{identity.did}</code></div><div className="liveKey"><small>FINGERPRINT</small><code>{fp}</code></div>{mailbox && <div className="liveKey"><small>MAILBOX</small><code>{mailbox}</code></div>}<div className="liveActions"><button onClick={refresh} disabled={loading}>{loading ? tx("Refreshing…", "Yenileniyor…") : tx("Refresh now", "Şimdi yenile")}</button>{proofUrl && <a className="liveButton secondary" href={proofUrl} target="_blank" rel="noreferrer">{tx("Open DID proof room ↗", "DID proof odasını aç ↗")}</a>}</div><p className="liveChecked">{snapshot?.checkedAt ? `${tx("Last successful read", "Son başarılı okuma")}: ${formatStamp(snapshot.checkedAt,tr)}` : ""}</p></article>
+          <article className="panel liveVerify"><div className="panelHead"><span>VERIFY</span><h2>{tx("What is being verified", "Ne doğrulanıyor?")}</h2><em>READ ONLY</em></div><div className="liveSourceGuide"><strong>{tx("IDENTITY FOUND", "KİMLİK BULUNDU")}</strong><span>{tx("Technocore returned records matching this DID.", "Technocore bu DID ile eşleşen kayıtlar döndürdü.")}</span></div><div className="liveSourceGuide"><strong>{tx("VERIFIED ACTIVITY", "DOĞRULANMIŞ AKTİVİTE")}</strong><span>{tx("A message signed by this DID and read back from its proof room or current mailbox.", "Bu DID ile imzalanmış ve proof odasından veya güncel mailbox'tan geri okunmuş mesaj.")}</span></div><div className="liveSourceGuide"><strong>{tx("CONNECTION", "BAĞLANTI")}</strong><span>{connection === "ok" ? tx("The latest refresh succeeded.", "Son yenileme başarılı.") : connection === "checking" ? tx("Checking Technocore now.", "Technocore şu anda kontrol ediliyor.") : connection === "partial" ? tx("One source refreshed; another is delayed.", "Kaynaklardan biri yenilendi; diğeri gecikiyor.") : tx("The latest refresh failed; verified data above is preserved.", "Son yenileme başarısız; yukarıdaki doğrulanmış veriler korunuyor.")}</span></div><div className="liveKey"><small>DID</small><code>{identity.did}</code></div><div className="liveKey"><small>FINGERPRINT</small><code>{fp}</code></div>{mailbox && <div className="liveKey"><small>MAILBOX</small><code>{mailbox}</code></div>}<div className="liveActions"><button onClick={refresh} disabled={loading}>{loading ? tx("Refreshing…", "Yenileniyor…") : tx("Refresh now", "Şimdi yenile")}</button>{proofUrl && <a className="liveButton secondary" href={proofUrl} target="_blank" rel="noreferrer">{tx("Open DID proof room ↗", "DID proof odasını aç ↗")}</a>}</div><p className="liveChecked">{snapshot?.checkedAt ? `${tx("Last successful read", "Son başarılı okuma")}: ${formatStamp(snapshot.checkedAt,tr)}` : ""}</p></article>
         </section>
       </>}
     </main>
