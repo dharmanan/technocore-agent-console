@@ -6,6 +6,7 @@ import SiteFooter from "./SiteFooter";
 import ActivityStateSync from "./ActivityStateSync";
 import ProfileStateSync from "./ProfileStateSync";
 import ProfileRecoveryNotice from "./ProfileRecoveryNotice";
+import PendingActivityCheck from "./PendingActivityCheck";
 
 export const metadata: Metadata = {
   title: "Technocore Agent Console",
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ActivityStateSync />
         <ProfileStateSync />
         <ProfileRecoveryNotice />
+        <PendingActivityCheck />
         {children}
         <SiteFooter />
       </body>
