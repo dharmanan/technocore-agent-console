@@ -18,6 +18,7 @@ type ProofMessage = {
 };
 
 type ProofPayload = { messages?: ProofMessage[] } | ProofMessage[];
+type CachedLiveSnapshot = { profile?: ProofMessage[] };
 
 function parseMessages(raw: string): ProofMessage[] {
   try {
@@ -43,15 +44,8 @@ function sortNewest(a: AgentProfileVersion, b: AgentProfileVersion) {
   return Date.parse(b.ts || "") - Date.parse(a.ts || "");
 }
 
-export async function resolveAgentProfileHistory(didInput: string): Promise<AgentProfileVersion[]> {
-  const did = didInput.trim();
-  if (!did.startsWith("did:key:") || did.length < 32) throw new Error("CONTACT_DID_INVALID");
-
-  const fp = await fingerprint(did);
-  const raw = await proxyGet(`${publicProofPath(fp)}&n=${Date.now()}`);
-  const room = publicProofRoom(fp);
-
-  const versions = parseMessages(raw)
+function versionsFromMessages(did: string, fp: string, room: string, messages: ProofMessage[]) {
+  return messages
     .filter((message) => message.from === did)
     .map((message) => {
       const parsed = parseProfile(message.text, did);
@@ -66,16 +60,51 @@ export async function resolveAgentProfileHistory(didInput: string): Promise<Agen
         ts: message.ts || null,
       } satisfies AgentProfileVersion;
     })
-    .filter((value): value is AgentProfileVersion => Boolean(value))
-    .sort(sortNewest);
+    .filter((value): value is AgentProfileVersion => Boolean(value));
+}
 
+function cachedProfileMessages(did: string): ProofMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(`technocore-agent-console.liveSnapshot.${did}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as CachedLiveSnapshot;
+    return Array.isArray(parsed.profile) ? parsed.profile : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function resolveAgentProfileHistory(didInput: string): Promise<AgentProfileVersion[]> {
+  const did = didInput.trim();
+  if (!did.startsWith("did:key:") || did.length < 32) throw new Error("CONTACT_DID_INVALID");
+
+  const fp = await fingerprint(did);
+  const room = publicProofRoom(fp);
+  const cached = versionsFromMessages(did, fp, room, cachedProfileMessages(did));
+  let live: AgentProfileVersion[] = [];
+  let liveReadSucceeded = false;
+
+  try {
+    const raw = await proxyGet(`${publicProofPath(fp)}&n=${Date.now()}`);
+    liveReadSucceeded = true;
+    live = versionsFromMessages(did, fp, room, parseMessages(raw));
+  } catch {
+    // Technocore reads can be delayed. The last successfully verified Live
+    // snapshot remains valid fallback evidence for this DID.
+  }
+
+  const merged = [...live, ...cached].sort(sortNewest);
   const seen = new Set<string>();
-  return versions.filter((version) => {
+  const versions = merged.filter((version) => {
     const key = `${version.agent}|${version.mailbox}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+
+  if (!versions.length && !liveReadSucceeded) throw new Error("PROFILE_HISTORY_UNAVAILABLE");
+  return versions;
 }
 
 export async function resolveLatestAgentProfile(didInput: string): Promise<AgentProfileVersion> {
