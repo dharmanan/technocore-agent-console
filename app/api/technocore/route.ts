@@ -8,17 +8,6 @@ const ROOM_POST_RE = /^\/r\/[a-z0-9][a-z0-9_-]{0,47}$/;
 
 export const maxDuration = 60;
 
-function profileProofCompatibility(path: string): { upstreamPath: string; syntheticWrite: boolean } | null {
-  const match = path.match(/^\/kv\/did-([0-9a-f]{2})\/([0-9a-f]{14})(?:\/set\/.*)?$/i);
-  if (!match) return null;
-
-  const fingerprint = `${match[1]}${match[2]}`.toLowerCase();
-  return {
-    upstreamPath: `/r/proof-${fingerprint}?format=json&limit=200&n=${Date.now()}`,
-    syntheticWrite: path.includes("/set/"),
-  };
-}
-
 function timeoutResponse(kind: "read" | "write") {
   return new NextResponse(
     kind === "write"
@@ -34,23 +23,11 @@ export async function GET(request: NextRequest) {
     return new NextResponse("Unsupported Technocore path.", { status: 400 });
   }
 
-  const compatibility = profileProofCompatibility(requestedPath);
-  if (compatibility?.syntheticWrite) {
-    return new NextResponse(
-      "Profile index compatibility accepted. Signed DID proof is the canonical profile record.",
-      {
-        status: 200,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      },
-    );
-  }
-
-  const path = compatibility?.upstreamPath || requestedPath;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), READ_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${ORIGIN}${path}`, {
+    const response = await fetch(`${ORIGIN}${requestedPath}`, {
       method: "GET",
       headers: { Accept: "text/plain, application/json;q=0.9" },
       cache: "no-store",
