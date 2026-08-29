@@ -59,15 +59,20 @@ export function didNotePath(fingerprintValue: string): string {
   if (!/^[0-9a-f]{16}$/.test(fingerprintValue)) throw new Error("Invalid DID fingerprint.");
   return `/kv/did-${fingerprintValue.slice(0, 2)}/${fingerprintValue.slice(2)}`;
 }
+
 export function contributionNotePath(fingerprintValue: string): string {
   if (!/^[0-9a-f]{16}$/.test(fingerprintValue)) throw new Error("Invalid DID fingerprint.");
   return `/kv/contrib-${fingerprintValue.slice(0, 2)}/${fingerprintValue.slice(2)}`;
 }
+
 export function publicProofRoom(fingerprintValue: string): string {
   if (!/^[0-9a-f]{16}$/.test(fingerprintValue)) throw new Error("Invalid DID fingerprint.");
   return `proof-${fingerprintValue}`;
 }
-export function publicProofPath(fingerprintValue: string): string { return `/r/${publicProofRoom(fingerprintValue)}?format=json`; }
+
+export function publicProofPath(fingerprintValue: string): string {
+  return `/r/${publicProofRoom(fingerprintValue)}?format=json`;
+}
 
 export async function proxyGet(path: string): Promise<string> {
   const response = await fetch(`/api/technocore?path=${encodeURIComponent(path)}`, { cache: "no-store" });
@@ -179,12 +184,15 @@ export async function sendDirectMessage(identity: StoredIdentity, recipientMailb
 function profileIndexMatches(raw: string, identity: StoredIdentity, agent: string, mailbox: string): boolean {
   return raw.includes(identity.did) && raw.includes(`agent:${agent}`) && raw.includes(`mailbox:${mailbox}`);
 }
+
 function profileProofMatches(raw: string, identity: StoredIdentity, agent: string, mailbox: string): boolean {
   return raw.includes(identity.did) && raw.includes("technocore-profile-v1") && raw.includes(`agent:${agent}`) && raw.includes(`mailbox:${mailbox}`);
 }
+
 async function canReadMatchingIndex(path: string, identity: StoredIdentity, agent: string, mailbox: string): Promise<boolean> {
   try { return profileIndexMatches(await proxyGet(path), identity, agent, mailbox); } catch { return false; }
 }
+
 async function canReadMatchingProof(path: string, identity: StoredIdentity, agent: string, mailbox: string): Promise<boolean> {
   try { return profileProofMatches(await proxyGet(path), identity, agent, mailbox); } catch { return false; }
 }
@@ -194,27 +202,47 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
   const fingerprintValue = await fingerprint(identity.did);
   const notePath = didNotePath(fingerprintValue);
   const proofPath = publicProofPath(fingerprintValue);
+  const proofRoom = publicProofRoom(fingerprintValue);
   const value = cleanLine(`technocore-profile-v1 did:${identity.did} agent:${agent} mailbox:${mailbox}`, 4096);
+
   onStage?.("checking-index");
   let indexState: ProfilePublishResult["index"] = "existing";
   if (!await canReadMatchingIndex(notePath, identity, agent, mailbox)) {
     onStage?.("writing-index");
-    try { await proxyGet(`${notePath}/set/${encodeURIComponent(value)}`); indexState = "published"; }
-    catch (error) {
-      if (!await canReadMatchingIndex(notePath, identity, agent, mailbox)) throw new Error(`PROFILE_INDEX_PENDING: ${error instanceof Error ? error.message : "Unknown Technocore error"}`);
+    try {
+      await proxyGet(`${notePath}/set/${encodeURIComponent(value)}`);
+      indexState = "published";
+    } catch (error) {
+      if (!await canReadMatchingIndex(notePath, identity, agent, mailbox)) {
+        throw new Error(`PROFILE_INDEX_PENDING: ${error instanceof Error ? error.message : "Unknown Technocore error"}`);
+      }
       indexState = "confirmed-after-error";
     }
   }
-  onStage?.("index-confirmed"); onStage?.("checking-proof");
+
+  onStage?.("index-confirmed");
+  onStage?.("checking-proof");
   let proofState: ProfilePublishResult["proof"] = "existing";
+
   if (!await canReadMatchingProof(proofPath, identity, agent, mailbox)) {
     onStage?.("writing-proof");
-    try { await sendSignedMessageToRoom(identity, publicProofRoom(fingerprintValue), value); proofState = "published"; }
-    catch (error) {
-      if (!await canReadMatchingProof(proofPath, identity, agent, mailbox)) throw new Error(`PROFILE_PROOF_PENDING: ${error instanceof Error ? error.message : "Unknown Technocore error"}`);
-      proofState = "confirmed-after-error";
+    let writeError: unknown = null;
+
+    try {
+      await sendSignedMessageToRoom(identity, proofRoom, value);
+    } catch (error) {
+      writeError = error;
     }
+
+    const confirmed = await waitForExactActivity(identity, proofRoom, value, 20, 1500);
+    if (!confirmed) {
+      const raw = writeError instanceof Error ? writeError.message : "ownership proof was not readable after the verification window";
+      throw new Error(`PROFILE_PROOF_PENDING: ${raw}`);
+    }
+
+    proofState = writeError ? "confirmed-after-error" : "published";
   }
+
   onStage?.("proof-confirmed");
   return { index: indexState, proof: proofState };
 }
@@ -234,6 +262,7 @@ export function createMailbox(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
   return `mb-p-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
+
 export async function fingerprint(did: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(did));
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
