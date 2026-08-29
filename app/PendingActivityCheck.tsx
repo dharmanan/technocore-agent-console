@@ -4,13 +4,39 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { identityChangeEventName, loadIdentity } from "../lib/identity";
 import {
+  clearPendingActivity,
   loadPendingActivity,
   pendingActivityEventName,
   readMailbox,
-  verifyPendingActivity,
+  type TechnocoreMessage,
 } from "../lib/technocore";
 
 type CheckState = "idle" | "checking" | "missing" | "error" | "found";
+type CachedSnapshot = { mailbox?: TechnocoreMessage[] };
+
+function normalized(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function matches(messages: TechnocoreMessage[], did: string, text: string) {
+  const expected = normalized(text);
+  return Boolean(expected) && messages.some((item) => item.from === did && normalized(item.text) === expected);
+}
+
+function readCachedMailbox(did: string): TechnocoreMessage[] {
+  try {
+    const raw = localStorage.getItem(`technocore-agent-console.liveSnapshot.${did}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as CachedSnapshot;
+    return Array.isArray(parsed.mailbox) ? parsed.mailbox : [];
+  } catch {
+    return [];
+  }
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 export default function PendingActivityCheck() {
   const [target, setTarget] = useState<HTMLElement | null>(null);
@@ -19,6 +45,7 @@ export default function PendingActivityCheck() {
   const [tr, setTr] = useState(false);
   const [pendingText, setPendingText] = useState("");
   const [activityDone, setActivityDone] = useState(false);
+  const [checkedText, setCheckedText] = useState("");
 
   function refreshState() {
     const identity = loadIdentity();
@@ -65,68 +92,87 @@ export default function PendingActivityCheck() {
     const identity = loadIdentity();
     if (!identity?.profile?.mailbox) return;
 
+    const pending = loadPendingActivity(identity.did);
+    const textarea = target?.querySelector<HTMLTextAreaElement>("textarea");
+    const exactText = normalized(pending?.text || textarea?.value || "");
+    setCheckedText(exactText);
+
+    if (!exactText) {
+      setState("missing");
+      return;
+    }
+
     setState("checking");
-    try {
-      const pending = loadPendingActivity(identity.did);
-      let found = false;
 
-      if (pending) {
-        found = await verifyPendingActivity(identity);
-      } else {
-        const textarea = target?.querySelector<HTMLTextAreaElement>("textarea");
-        const exactText = textarea?.value.trim() || "";
-        if (!exactText) {
-          setState("missing");
-          return;
-        }
-        const messages = await readMailbox(identity.profile.mailbox);
-        found = messages.some((item) => item.from === identity.did && item.text === exactText);
-      }
-
-      if (!found) {
-        setState("missing");
-        return;
-      }
-
+    // First use the same last verified mailbox snapshot shown by the Live page.
+    const cached = readCachedMailbox(identity.did);
+    if (matches(cached, identity.did, exactText)) {
+      if (pending) clearPendingActivity(identity.did);
       localStorage.setItem(`technocore-agent-console.progress.${identity.did}.activity`, "true");
       setActivityDone(true);
       setPendingText("");
       setState("found");
-      window.setTimeout(() => window.location.reload(), 700);
-    } catch {
-      setState("error");
+      return;
     }
+
+    // Then retry the live mailbox read. One proxy timeout must not decide the result.
+    let atLeastOneReadSucceeded = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const messages = await readMailbox(identity.profile.mailbox);
+        atLeastOneReadSucceeded = true;
+        if (matches(messages, identity.did, exactText)) {
+          if (pending) clearPendingActivity(identity.did);
+          localStorage.setItem(`technocore-agent-console.progress.${identity.did}.activity`, "true");
+          setActivityDone(true);
+          setPendingText("");
+          setState("found");
+          return;
+        }
+      } catch {
+        // Technocore reads are eventually consistent and can time out transiently.
+      }
+
+      if (attempt < 2) await wait(1800 * (attempt + 1));
+    }
+
+    setState(atLeastOneReadSucceeded ? "missing" : "error");
   }
 
   if (!visible || !target) return null;
 
+  const hasPending = Boolean(pendingText);
   const content = (
-    <aside className={`activityDeliveryPanel ${pendingText ? "hasPending" : ""}`} role="status">
+    <aside className={`activityDeliveryPanel ${hasPending ? "hasPending" : ""}`} role="status">
       <div className="activityDeliveryCopy">
         <strong>
-          {pendingText
+          {hasPending
             ? (tr ? "Son gönderimin teslimatı bekleniyor" : "The latest delivery is still pending")
             : activityDone
-              ? (tr ? "Teslimat kontrolü" : "Delivery check")
+              ? (tr ? "Technocore kayıt kontrolü" : "Technocore record check")
               : (tr ? "İlk aktiviteni doğrula" : "Verify your first activity")}
         </strong>
         <span>
           {state === "checking"
-            ? (tr ? "Technocore mailbox aynı mesaj için kontrol ediliyor…" : "Checking the Technocore mailbox for the exact message…")
+            ? (tr ? "Önce son doğrulanmış Live kaydı, ardından canlı mailbox kontrol ediliyor…" : "Checking the last verified Live snapshot, then the live mailbox…")
             : state === "found"
-              ? (tr ? "Mesaj Technocore'dan geri okundu. Doğrulama tamamlandı." : "The message was read back from Technocore. Verification is complete.")
+              ? (tr ? "Bu mesaj Technocore'dan geri okunmuş. Doğrulandı." : "This message has been read back from Technocore. Verified.")
               : state === "missing"
-                ? (tr ? "Bu exact mesaj henüz Technocore'dan geri okunamıyor. Yeniden göndermeden daha sonra tekrar kontrol edebilirsin." : "This exact message is not readable from Technocore yet. Check again later without resending it.")
+                ? (tr ? "Technocore mailbox okunabildi fakat bu mesaj son başarılı okumada bulunmadı. Bu, gecikmeli işleniyorsa daha sonra görünebileceği anlamına gelir." : "The Technocore mailbox was readable, but this message was not found in the latest successful read. It may still appear later if processing is delayed.")
                 : state === "error"
-                  ? (tr ? "Technocore mailbox şu anda okunamıyor. Bu, mesajın kaybolduğu anlamına gelmez." : "The Technocore mailbox cannot be read right now. This does not mean the message was lost.")
-                  : pendingText
-                    ? (tr ? "Bu kontrol yeni mesaj göndermez. Yalnız bekleyen exact mesajı Technocore'dan geri okumaya çalışır." : "This does not send another message. It only checks whether the exact pending message can now be read back.")
-                    : (tr ? "Yukarıdaki mevcut mesajı yeniden göndermeden Technocore mailbox'ında exact olarak ara." : "Check the exact message currently shown above in the Technocore mailbox without resending it.")}
+                  ? (tr ? "Canlı mailbox üç denemede de cevap vermedi ve son doğrulanmış Live kaydında da bu mesaj yok. Mesajı yeniden göndermeden daha sonra tekrar kontrol et." : "The live mailbox did not respond after three attempts, and this message is not in the last verified Live snapshot. Check again later without resending.")
+                  : hasPending
+                    ? (tr ? "Yeni mesaj göndermeden yalnız son bekleyen mesajın Technocore'da görünüp görünmediğini kontrol eder." : "Checks whether the last pending message is now visible on Technocore without sending it again.")
+                    : (tr ? "Yeni mesaj göndermez. Yukarıdaki mevcut metnin son doğrulanmış Live kaydında veya canlı mailbox'ta bulunup bulunmadığını kontrol eder." : "Does not send a message. It checks whether the current text above exists in the last verified Live snapshot or the live mailbox.")}
         </span>
-        {pendingText && <code>{pendingText}</code>}
+        {(hasPending || (state !== "idle" && checkedText)) && <code>{hasPending ? pendingText : checkedText}</code>}
       </div>
       <button type="button" onClick={check} disabled={state === "checking"}>
-        {state === "checking" ? (tr ? "Kontrol ediliyor…" : "Checking…") : (tr ? "Technocore'dan teslimatı kontrol et" : "Check delivery on Technocore")}
+        {state === "checking"
+          ? (tr ? "Kontrol ediliyor…" : "Checking…")
+          : hasPending
+            ? (tr ? "Son gönderimin teslimatını kontrol et" : "Check latest delivery")
+            : (tr ? "Mevcut mesajı Technocore'da ara" : "Find current message on Technocore")}
       </button>
     </aside>
   );
