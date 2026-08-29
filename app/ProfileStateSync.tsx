@@ -6,7 +6,13 @@ import { loadIdentity } from "../lib/identity";
 export default function ProfileStateSync() {
   useEffect(() => {
     const identity = loadIdentity();
-    if (!identity?.profile) return;
+    if (!identity) return;
+
+    if (!identity.profile) {
+      localStorage.removeItem("technocore-agent-console.agentName");
+      localStorage.removeItem("technocore-agent-console.mailbox");
+      return;
+    }
 
     const localAgent = localStorage.getItem("technocore-agent-console.agentName") || "";
     const localMailbox = localStorage.getItem("technocore-agent-console.mailbox") || "";
