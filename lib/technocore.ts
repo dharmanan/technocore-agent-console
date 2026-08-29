@@ -96,6 +96,11 @@ async function hasExactActivity(identity: StoredIdentity, room: string, body: st
   return messages.some((item) => item.from === identity.did && item.text === body);
 }
 
+export async function verifySignedMessage(identity: StoredIdentity, room: string, text: string): Promise<boolean> {
+  const body = cleanLine(text);
+  return hasExactActivity(identity, room, body);
+}
+
 async function waitForExactActivity(identity: StoredIdentity, room: string, body: string, attempts = 10, delayMs = 1500) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -115,10 +120,6 @@ function isSystemProof(text: string | undefined) {
 export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
 
-  // The caller chooses the room. In particular, an mb-p-* room is already a
-  // Technocore signed-write mailbox. Do not silently redirect mailbox activity
-  // into the public proof room: verification must read back the same room the
-  // UI tells the user is receiving the message.
   try {
     if (await hasExactActivity(identity, room, body)) return "already-confirmed";
   } catch {
