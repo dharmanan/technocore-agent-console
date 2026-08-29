@@ -1,6 +1,7 @@
 import { signText, type StoredIdentity } from "./identity";
 
 export const TECHNOCORE_ORIGIN = "https://technocore.chat";
+export const FIRST_ACTIVITY_ROOM = "lobby";
 
 export type ProfilePublishStage =
   | "checking-index"
@@ -15,6 +16,18 @@ export type ProfilePublishResult = {
   proof: "existing" | "published" | "confirmed-after-error";
 };
 
+export type ActivityPublishResult = "existing" | "published" | "confirmed-after-error";
+
+type RoomMessage = {
+  from?: string;
+  text?: string;
+  seq?: number;
+  ts?: string;
+  nonce?: string;
+};
+
+type RoomResponse = { messages?: RoomMessage[] } | RoomMessage[];
+
 export function cleanName(value: string): string {
   const result = value.trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(result)) {
@@ -24,7 +37,8 @@ export function cleanName(value: string): string {
 }
 
 export function cleanLine(value: string, limit = 4096): string {
-  const result = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
+  // Match Technocore's documented single-line sweep before signing.
+  const result = value.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}]/gu, " ").trim();
   if (!result) throw new Error("Text cannot be empty.");
   if (result.length > limit) throw new Error(`Text is limited to ${limit} characters.`);
   return result;
@@ -32,6 +46,21 @@ export function cleanLine(value: string, limit = 4096): string {
 
 function encodeSegment(value: string) {
   return encodeURIComponent(value).replace(/%2F/gi, "%252F");
+}
+
+function parseRoomMessages(raw: string): RoomMessage[] {
+  try {
+    const parsed = JSON.parse(raw) as RoomResponse;
+    if (Array.isArray(parsed)) return parsed;
+    return Array.isArray(parsed.messages) ? parsed.messages : [];
+  } catch {
+    return [];
+  }
+}
+
+async function readRoomMessages(room: string): Promise<RoomMessage[]> {
+  const raw = await proxyGet(`/r/${encodeSegment(room)}?format=json&limit=200&n=${Date.now()}`);
+  return parseRoomMessages(raw);
 }
 
 export function didNotePath(fingerprintValue: string): string {
@@ -66,6 +95,45 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
   const canonical = `${room}|${nonce}|${body}`;
   const sig = await signText(identity.privateKeyJwk, canonical);
   return proxyGet(`/r/${encodeSegment(room)}/say-signed/${encodeSegment(identity.did)}/${encodeSegment(sig)}/${nonce}/${encodeURIComponent(body)}`);
+}
+
+export async function hasVerifiableActivity(identity: StoredIdentity, room = FIRST_ACTIVITY_ROOM): Promise<boolean> {
+  try {
+    const messages = await readRoomMessages(room);
+    return messages.some((item) => item.from === identity.did);
+  } catch {
+    return false;
+  }
+}
+
+async function hasExactActivity(identity: StoredIdentity, room: string, body: string): Promise<boolean> {
+  try {
+    const messages = await readRoomMessages(room);
+    return messages.some((item) => item.from === identity.did && item.text === body);
+  } catch {
+    return false;
+  }
+}
+
+export async function publishVerifiableActivity(
+  identity: StoredIdentity,
+  text: string,
+  room = FIRST_ACTIVITY_ROOM,
+): Promise<ActivityPublishResult> {
+  const body = cleanLine(text);
+
+  if (await hasExactActivity(identity, room, body)) return "existing";
+
+  try {
+    await sendSignedMessage(identity, room, body);
+    return "published";
+  } catch (error) {
+    // A proxy timeout does not prove that Technocore rejected the write. Read back
+    // before showing failure so the user does not create accidental duplicates.
+    if (await hasExactActivity(identity, room, body)) return "confirmed-after-error";
+    const raw = error instanceof Error ? error.message : "Unknown Technocore error";
+    throw new Error(`ACTIVITY_SEND_PENDING: ${raw}`);
+  }
 }
 
 function profileIndexMatches(raw: string, identity: StoredIdentity, agent: string, mailbox: string): boolean {
