@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { loadIdentity, type StoredIdentity } from "../../lib/identity";
-import { fingerprint, proxyGet, publicProofPath } from "../../lib/technocore";
+import { FIRST_ACTIVITY_ROOM, fingerprint, proxyGet, publicProofPath } from "../../lib/technocore";
 
 type Lang = "en" | "tr";
 type LiveMessage = { seq?: number; ts?: string; from?: string; text?: string; room?: string };
@@ -14,6 +14,7 @@ type LiveState = {
   seen: boolean;
   lastSeen: string;
   lastSeq: number | null;
+  lobbyMessages: LiveMessage[];
   proofMessages: LiveMessage[];
   mailboxMessages: LiveMessage[];
 };
@@ -25,6 +26,7 @@ const EMPTY: LiveState = {
   seen: false,
   lastSeen: "",
   lastSeq: null,
+  lobbyMessages: [],
   proofMessages: [],
   mailboxMessages: [],
 };
@@ -41,6 +43,16 @@ function formatStamp(value: string, tr: boolean) {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(parsed);
+}
+
+function parseRoom(raw: string): RoomPayload {
+  try {
+    const parsed = JSON.parse(raw) as RoomPayload | LiveMessage[];
+    if (Array.isArray(parsed)) return { messages: parsed };
+    return parsed || {};
+  } catch {
+    return {};
+  }
 }
 
 export default function LiveActivityPage() {
@@ -75,20 +87,27 @@ export default function LiveActivityPage() {
     if (!identity || !fp) return;
     setState((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const [proofResult, mailboxResult] = await Promise.allSettled([
-        proxyGet(publicProofPath(fp)),
-        mailbox ? proxyGet(`/r/${encodeURIComponent(mailbox)}?format=json`) : Promise.resolve(""),
+      const [lobbyResult, proofResult, mailboxResult] = await Promise.allSettled([
+        proxyGet(`/r/${FIRST_ACTIVITY_ROOM}?format=json&limit=200&n=${Date.now()}`),
+        proxyGet(`${publicProofPath(fp)}&n=${Date.now()}`),
+        mailbox ? proxyGet(`/r/${encodeURIComponent(mailbox)}?format=json&limit=200&n=${Date.now()}`) : Promise.resolve(""),
       ]);
 
-      const proofPayload = proofResult.status === "fulfilled" ? JSON.parse(proofResult.value) as RoomPayload : {};
-      const mailboxPayload = mailboxResult.status === "fulfilled" && mailboxResult.value ? JSON.parse(mailboxResult.value) as RoomPayload : {};
-      const proofMessages = (proofPayload.messages || []).filter((message) => message.from === identity.did).slice(-5).reverse();
-      const mailboxMessages = (mailboxPayload.messages || []).filter((message) => message.from === identity.did).slice(-5).reverse();
-      const all = [...proofMessages, ...mailboxMessages].sort((a, b) => Date.parse(String(b.ts || "")) - Date.parse(String(a.ts || "")));
+      const lobbyPayload = lobbyResult.status === "fulfilled" ? parseRoom(lobbyResult.value) : {};
+      const proofPayload = proofResult.status === "fulfilled" ? parseRoom(proofResult.value) : {};
+      const mailboxPayload = mailboxResult.status === "fulfilled" && mailboxResult.value ? parseRoom(mailboxResult.value) : {};
+
+      const own = (messages?: LiveMessage[]) => (messages || []).filter((message) => message.from === identity.did).slice(-8).reverse();
+      const lobbyMessages = own(lobbyPayload.messages);
+      const proofMessages = own(proofPayload.messages);
+      const mailboxMessages = own(mailboxPayload.messages);
+
+      const all = [...lobbyMessages, ...proofMessages, ...mailboxMessages]
+        .sort((a, b) => Date.parse(String(b.ts || "")) - Date.parse(String(a.ts || "")));
       const latest = all[0];
 
-      if (!latest && proofResult.status === "rejected" && mailboxResult.status === "rejected") {
-        throw proofResult.reason || mailboxResult.reason || new Error("Technocore read failed.");
+      if (!latest && lobbyResult.status === "rejected" && proofResult.status === "rejected" && mailboxResult.status === "rejected") {
+        throw lobbyResult.reason || proofResult.reason || mailboxResult.reason || new Error("Technocore read failed.");
       }
 
       setState({
@@ -98,6 +117,7 @@ export default function LiveActivityPage() {
         seen: Boolean(latest),
         lastSeen: String(latest?.ts || ""),
         lastSeq: typeof latest?.seq === "number" ? latest.seq : null,
+        lobbyMessages,
         proofMessages,
         mailboxMessages,
       });
@@ -120,9 +140,19 @@ export default function LiveActivityPage() {
 
   const shortDid = useMemo(() => identity ? `${identity.did.slice(0, 24)}…${identity.did.slice(-14)}` : "", [identity]);
   const proofUrl = identity && fp ? `https://technocore.chat${publicProofPath(fp)}` : "";
-  const recent = [...state.proofMessages.map((m) => ({ ...m, source: "proof" })), ...state.mailboxMessages.map((m) => ({ ...m, source: "mailbox" }))]
+  const recent = [
+    ...state.lobbyMessages.map((m) => ({ ...m, source: "lobby" })),
+    ...state.proofMessages.map((m) => ({ ...m, source: "proof" })),
+    ...state.mailboxMessages.map((m) => ({ ...m, source: "mailbox" })),
+  ]
     .sort((a, b) => Date.parse(String(b.ts || "")) - Date.parse(String(a.ts || "")))
-    .slice(0, 6);
+    .slice(0, 10);
+
+  function sourceLabel(source: string) {
+    if (source === "lobby") return "LOBBY";
+    if (source === "proof") return "PUBLIC PROOF";
+    return "MAILBOX";
+  }
 
   return (
     <main className="shell liveShell">
@@ -140,14 +170,17 @@ export default function LiveActivityPage() {
       <section className="liveHero">
         <div>
           <p className="eyebrow">{tx("LIVE ACTIVITY · READ ONLY", "CANLI AKTİVİTE · SALT OKUNUR")}</p>
-          <h1>{tx("Proof of presence.", "Varlığını kanıtla.")}</h1>
-          <p>{tx("This view reads Technocore and checks whether the DID stored in this browser is actually visible in its public proof room or mailbox. It never sends a transaction and does not need the FLOP faucet.", "Bu görünüm Technocore'u okur ve bu tarayıcıda saklanan DID'in public proof odasında veya mailbox içinde gerçekten görünüp görünmediğini kontrol eder. İşlem göndermez ve FLOP faucet gerektirmez.")}</p>
+          <h1>{tx("Verify what actually arrived.", "Gerçekte ne ulaştı, doğrula.")}</h1>
+          <p>{tx(
+            "This page reads three Technocore locations for your DID: the public lobby used by the first activity, your public profile proof room, and your private mailbox. A successful-looking request is only treated as verified when it can be read back from Technocore.",
+            "Bu sayfa DID'in için Technocore'daki üç alanı okur: ilk aktivitenin gönderildiği public lobby, profil sahiplik kanıtının bulunduğu public proof odası ve özel mailbox. Bir gönderim ancak Technocore'dan tekrar okunabildiğinde gerçekten doğrulanmış sayılır.",
+          )}</p>
         </div>
         <div className={`livePresence ${state.seen ? "seen" : ""}`}>
           <span className="livePulse" />
           <div>
             <small>{tx("PRESENCE", "VARLIK")}</small>
-            <strong>{!identity ? tx("No local DID", "Yerel DID yok") : state.loading ? tx("Checking Technocore", "Technocore kontrol ediliyor") : state.seen ? tx("Seen on Technocore", "Technocore'da görüldü") : tx("Not seen in current read", "Mevcut okumada görülmedi")}</strong>
+            <strong>{!identity ? tx("No local DID", "Yerel DID yok") : state.loading ? tx("Reading Technocore", "Technocore okunuyor") : state.seen ? tx("DID found on Technocore", "DID Technocore'da bulundu") : tx("Not found in current read", "Mevcut okumada bulunamadı")}</strong>
             <code>{shortDid || tx("Create or import an identity in the console first.", "Önce console içinde kimlik oluştur veya içe aktar.")}</code>
           </div>
         </div>
@@ -156,32 +189,39 @@ export default function LiveActivityPage() {
       {!identity ? (
         <section className="liveEmpty panel">
           <div className="panelHead"><span>LIVE</span><h2>{tx("Identity required", "Kimlik gerekli")}</h2></div>
-          <p className="muted">{tx("Return to the console, generate or import your DID, then publish signed activity. This page will pick up the same local identity automatically.", "Console'a dön, DID oluştur veya içe aktar ve ardından imzalı aktivite yayınla. Bu sayfa aynı yerel kimliği otomatik olarak kullanır.")}</p>
+          <p className="muted">{tx("Return to the console and create or restore your identity first.", "Önce console'a dönüp kimliğini oluştur veya yedeğinden geri yükle.")}</p>
           <a className="liveButton" href="/">{tx("Open console", "Console'u aç")}</a>
         </section>
       ) : (
         <>
-          <section className="liveMetrics">
-            <article><small>{tx("STATUS", "DURUM")}</small><strong>{state.seen ? tx("VISIBLE", "GÖRÜNÜR") : tx("CHECKING", "KONTROL")}</strong><span>{state.error || tx("Read only Technocore verification", "Salt okunur Technocore doğrulaması")}</span></article>
-            <article><small>{tx("LAST SEEN", "SON GÖRÜLME")}</small><strong>{state.lastSeen ? formatStamp(state.lastSeen, tr) : "—"}</strong><span>{state.lastSeq !== null ? `seq ${state.lastSeq}` : tx("No matching sequence in this read", "Bu okumada eşleşen sequence yok")}</span></article>
-            <article><small>{tx("PROOF ROOM", "PROOF ODASI")}</small><strong>{state.proofMessages.length}</strong><span>{tx("matching messages in current window", "mevcut pencerede eşleşen mesaj")}</span></article>
-            <article><small>{tx("MAILBOX", "MAILBOX")}</small><strong>{state.mailboxMessages.length}</strong><span>{mailbox || tx("No mailbox stored", "Kayıtlı mailbox yok")}</span></article>
+          <section className="liveMetrics liveMetricsFive">
+            <article><small>{tx("STATUS", "DURUM")}</small><strong>{state.seen ? tx("VISIBLE", "GÖRÜNÜR") : tx("CHECKING", "KONTROL")}</strong><span>{state.error || tx("Read only verification", "Salt okunur doğrulama")}</span></article>
+            <article><small>{tx("LAST SEEN", "SON GÖRÜLME")}</small><strong>{state.lastSeen ? formatStamp(state.lastSeen, tr) : "—"}</strong><span>{state.lastSeq !== null ? `seq ${state.lastSeq}` : tx("No sequence yet", "Henüz sequence yok")}</span></article>
+            <article><small>LOBBY</small><strong>{state.lobbyMessages.length}</strong><span>{tx("first activity messages", "ilk aktivite mesajları")}</span></article>
+            <article><small>{tx("PROOF ROOM", "PROOF ODASI")}</small><strong>{state.proofMessages.length}</strong><span>{tx("profile ownership proof", "profil sahiplik kanıtı")}</span></article>
+            <article><small>MAILBOX</small><strong>{state.mailboxMessages.length}</strong><span>{mailbox || tx("No mailbox stored", "Kayıtlı mailbox yok")}</span></article>
           </section>
 
           <section className="liveGrid">
             <article className="panel liveFeed">
-              <div className="panelHead"><span>TRACE</span><h2>{tx("Live DID trace", "Canlı DID izi")}</h2><em>{tx("15 SEC POLL", "15 SN YENİLEME")}</em></div>
-              <p className="muted">{tx("Only messages signed by the DID stored in this browser are shown here.", "Burada yalnızca bu tarayıcıda saklanan DID tarafından imzalanmış mesajlar gösterilir.")}</p>
+              <div className="panelHead"><span>TRACE</span><h2>{tx("Verified DID activity", "Doğrulanmış DID aktivitesi")}</h2><em>{tx("15 SEC POLL", "15 SN YENİLEME")}</em></div>
+              <p className="muted">{tx(
+                "Only messages that can currently be read back from Technocore and match the DID stored in this browser are shown here.",
+                "Burada yalnızca Technocore'dan şu anda tekrar okunabilen ve bu tarayıcıdaki DID ile eşleşen mesajlar gösterilir.",
+              )}</p>
               {recent.length === 0 ? <div className="empty">{state.loading ? tx("Reading Technocore…", "Technocore okunuyor…") : tx("No matching DID activity in the current read window.", "Mevcut okuma penceresinde eşleşen DID aktivitesi yok.")}</div> : recent.map((item, index) => (
                 <div className="liveMessage" key={`${item.source}-${item.seq ?? index}-${item.ts ?? ""}`}>
-                  <div className="liveMessageMeta"><span>{item.source === "proof" ? "PUBLIC PROOF" : "MAILBOX"}</span><b>{item.seq ? `#${item.seq}` : "—"}</b><time>{item.ts ? formatStamp(item.ts, tr) : "—"}</time></div>
+                  <div className="liveMessageMeta"><span>{sourceLabel(item.source)}</span><b>{item.seq ? `#${item.seq}` : "—"}</b><time>{item.ts ? formatStamp(item.ts, tr) : "—"}</time></div>
                   <p>{cleanMessage(item.text)}</p>
                 </div>
               ))}
             </article>
 
             <article className="panel liveVerify">
-              <div className="panelHead"><span>VERIFY</span><h2>{tx("Proof links", "Proof bağlantıları")}</h2><em>{tx("PUBLIC", "PUBLIC")}</em></div>
+              <div className="panelHead"><span>VERIFY</span><h2>{tx("What each source proves", "Her kaynak neyi kanıtlıyor?")}</h2><em>READ ONLY</em></div>
+              <div className="liveSourceGuide"><strong>LOBBY</strong><span>{tx("Your first public verifiable activity.", "İlk public doğrulanabilir aktiviten.")}</span></div>
+              <div className="liveSourceGuide"><strong>PUBLIC PROOF</strong><span>{tx("Your published profile and ownership proof.", "Yayınlanan profilin ve sahiplik kanıtın.")}</span></div>
+              <div className="liveSourceGuide"><strong>MAILBOX</strong><span>{tx("Messages written to your private agent mailbox.", "Özel agent mailbox'ına yazılan mesajlar.")}</span></div>
               <div className="liveKey"><small>DID</small><code>{identity.did}</code></div>
               <div className="liveKey"><small>FINGERPRINT</small><code>{fp}</code></div>
               {mailbox && <div className="liveKey"><small>MAILBOX</small><code>{mailbox}</code></div>}
