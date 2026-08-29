@@ -57,6 +57,10 @@ function parseRoomMessages(raw: string): RoomMessage[] {
   }
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function readRoomMessages(room: string): Promise<RoomMessage[]> {
   const raw = await proxyGet(`/r/${encodeSegment(room)}?format=json&limit=200&n=${Date.now()}`);
   return parseRoomMessages(raw);
@@ -96,28 +100,47 @@ async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, t
   return proxyGet(`/r/${encodeSegment(room)}/say-signed/${encodeSegment(identity.did)}/${encodeSegment(sig)}/${nonce}/${encodeURIComponent(body)}`);
 }
 
+async function hasExactActivity(identity: StoredIdentity, room: string, body: string): Promise<boolean> {
+  try {
+    const messages = await readRoomMessages(room);
+    return messages.some((item) => item.from === identity.did && item.text === body);
+  } catch {
+    return false;
+  }
+}
+
+async function waitForExactActivity(identity: StoredIdentity, room: string, body: string, attempts = 8, delayMs = 2000) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await hasExactActivity(identity, room, body)) return true;
+    if (attempt < attempts - 1) await wait(delayMs);
+  }
+  return false;
+}
+
 export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
-  // The current onboarding UI historically passed the user's private mailbox here.
-  // Technocore's public onboarding/presence convention uses lobby for a first check-in.
-  // Keep proof-* and all other explicit rooms untouched; only redirect the generated
-  // private mailbox target used by Step 3.
   const targetRoom = room.startsWith("mb-p-") ? FIRST_ACTIVITY_ROOM : room;
-  return sendSignedMessageToRoom(identity, targetRoom, text);
+  const body = cleanLine(text);
+
+  if (targetRoom === FIRST_ACTIVITY_ROOM && await hasExactActivity(identity, targetRoom, body)) {
+    return "already-confirmed";
+  }
+
+  try {
+    const result = await sendSignedMessageToRoom(identity, targetRoom, body);
+    return result;
+  } catch (error) {
+    if (targetRoom === FIRST_ACTIVITY_ROOM) {
+      const confirmed = await waitForExactActivity(identity, targetRoom, body);
+      if (confirmed) return "confirmed-after-error";
+    }
+    throw error;
+  }
 }
 
 export async function hasVerifiableActivity(identity: StoredIdentity, room = FIRST_ACTIVITY_ROOM): Promise<boolean> {
   try {
     const messages = await readRoomMessages(room);
     return messages.some((item) => item.from === identity.did);
-  } catch {
-    return false;
-  }
-}
-
-async function hasExactActivity(identity: StoredIdentity, room: string, body: string): Promise<boolean> {
-  try {
-    const messages = await readRoomMessages(room);
-    return messages.some((item) => item.from === identity.did && item.text === body);
   } catch {
     return false;
   }
@@ -135,7 +158,8 @@ export async function publishVerifiableActivity(
     await sendSignedMessageToRoom(identity, room, body);
     return "published";
   } catch (error) {
-    if (await hasExactActivity(identity, room, body)) return "confirmed-after-error";
+    const confirmed = await waitForExactActivity(identity, room, body);
+    if (confirmed) return "confirmed-after-error";
     const raw = error instanceof Error ? error.message : "Unknown Technocore error";
     throw new Error(`ACTIVITY_SEND_PENDING: ${raw}`);
   }
