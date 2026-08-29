@@ -1,6 +1,14 @@
 import { signText, type StoredIdentity } from "./identity";
 
 export const TECHNOCORE_ORIGIN = "https://technocore.chat";
+const PENDING_ACTIVITY_EVENT = "technocore-pending-activity-changed";
+
+export type PendingActivity = {
+  did: string;
+  room: string;
+  text: string;
+  attemptedAt: string;
+};
 
 export type ProfilePublishStage =
   | "checking-index"
@@ -27,6 +35,42 @@ export type AgentContact = {
   seq?: number | null;
   ts?: string | null;
 };
+
+function pendingActivityKey(did: string) {
+  return `technocore-agent-console.pendingActivity.${did}`;
+}
+
+function broadcastPendingActivityChange() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(PENDING_ACTIVITY_EVENT));
+}
+
+export function pendingActivityEventName() {
+  return PENDING_ACTIVITY_EVENT;
+}
+
+export function loadPendingActivity(did: string): PendingActivity | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(pendingActivityKey(did));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as PendingActivity;
+    return value?.did === did && value.room && value.text ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingActivity(value: PendingActivity) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(pendingActivityKey(value.did), JSON.stringify(value));
+  broadcastPendingActivityChange();
+}
+
+export function clearPendingActivity(did: string) {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(pendingActivityKey(did));
+  broadcastPendingActivityChange();
+}
 
 export function cleanName(value: string): string {
   const result = value.trim().toLowerCase();
@@ -101,6 +145,14 @@ export async function verifySignedMessage(identity: StoredIdentity, room: string
   return hasExactActivity(identity, room, body);
 }
 
+export async function verifyPendingActivity(identity: StoredIdentity): Promise<boolean> {
+  const pending = loadPendingActivity(identity.did);
+  if (!pending) return false;
+  const found = await hasExactActivity(identity, pending.room, pending.text);
+  if (found) clearPendingActivity(identity.did);
+  return found;
+}
+
 async function waitForExactActivity(identity: StoredIdentity, room: string, body: string, attempts = 10, delayMs = 1500) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -119,6 +171,19 @@ function isSystemProof(text: string | undefined) {
 
 export async function sendSignedMessage(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
+  const unresolved = loadPendingActivity(identity.did);
+
+  if (unresolved) {
+    try {
+      const resolved = await hasExactActivity(identity, unresolved.room, unresolved.text);
+      if (resolved) clearPendingActivity(identity.did);
+      else if (unresolved.room === room && unresolved.text === body) throw new Error("ACTIVITY_DELIVERY_PENDING: previous attempt is still waiting for read-back");
+      else throw new Error("ACTIVITY_PENDING_EXISTS: verify the previous delivery before sending another activity");
+    } catch (error) {
+      if (error instanceof Error && (error.message.startsWith("ACTIVITY_DELIVERY_PENDING") || error.message.startsWith("ACTIVITY_PENDING_EXISTS"))) throw error;
+      throw new Error("ACTIVITY_PENDING_EXISTS: the previous delivery could not be checked yet; do not send another activity");
+    }
+  }
 
   try {
     if (await hasExactActivity(identity, room, body)) return "already-confirmed";
@@ -126,19 +191,32 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
     // A transient read failure should not prevent the single write attempt.
   }
 
+  savePendingActivity({ did: identity.did, room, text: body, attemptedAt: new Date().toISOString() });
+
   let writeResult = "";
   let writeError: unknown = null;
   try { writeResult = await sendSignedMessageToRoom(identity, room, body); }
   catch (error) { writeError = error; }
 
   const confirmed = await waitForExactActivity(identity, room, body);
-  if (confirmed) return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
+  if (confirmed) {
+    clearPendingActivity(identity.did);
+    return writeError ? "confirmed-after-error" : (writeResult || "confirmed");
+  }
 
   const raw = writeError instanceof Error ? writeError.message : "read-back confirmation did not arrive";
-  throw new Error(`ACTIVITY_VERIFY_PENDING: ${raw}`);
+  throw new Error(`ACTIVITY_DELIVERY_PENDING: ${raw}`);
 }
 
 export async function hasVerifiableActivity(identity: StoredIdentity): Promise<boolean> {
+  if (identity.profile?.mailbox) {
+    try {
+      const messages = await readMailbox(identity.profile.mailbox);
+      if (messages.some((item) => item.from === identity.did && Boolean(item.text))) return true;
+    } catch {
+      // Fall back to legacy proof-room activity.
+    }
+  }
   const fingerprintValue = await fingerprint(identity.did);
   const messages = await readRoomMessages(publicProofRoom(fingerprintValue));
   return messages.some((item) => item.from === identity.did && !isSystemProof(item.text));
