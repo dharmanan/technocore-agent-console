@@ -83,6 +83,7 @@ export default function LiveActivityPage() {
   const [connectionMessage, setConnectionMessage] = useState("");
   const retryMs = useRef(15000);
   const timerRef = useRef<number | null>(null);
+  const snapshotRef = useRef<Snapshot | null>(null);
   const tr = lang === "tr";
   const tx = (en: string, turkish: string) => tr ? turkish : en;
 
@@ -103,7 +104,11 @@ export default function LiveActivityPage() {
       setFp(value);
       try {
         const cached = localStorage.getItem(`technocore-agent-console.liveSnapshot.${identity.did}`);
-        if (cached) setSnapshot(JSON.parse(cached) as Snapshot);
+        if (cached) {
+          const parsedCache = JSON.parse(cached) as Snapshot;
+          snapshotRef.current = parsedCache;
+          setSnapshot(parsedCache);
+        }
       } catch {
         // Ignore invalid local cache.
       }
@@ -127,7 +132,7 @@ export default function LiveActivityPage() {
 
     try {
       const own = (messages: LiveMessage[]) => messages.filter((m) => m.from === identity.did);
-      const previous = snapshot;
+      const previous = snapshotRef.current;
 
       const proofMessages = proofResult.status === "fulfilled"
         ? own(parseRoom(proofResult.value))
@@ -149,6 +154,7 @@ export default function LiveActivityPage() {
         mailbox: mailboxMessages,
       };
 
+      snapshotRef.current = next;
       setSnapshot(next);
       localStorage.setItem(`technocore-agent-console.liveSnapshot.${identity.did}`, JSON.stringify(next));
 
