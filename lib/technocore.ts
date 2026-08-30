@@ -7,6 +7,7 @@ const PENDING_PROFILE_TTL_MS = 10 * 60_000;
 const DEFAULT_READ_TIMEOUT_MS = 16000;
 const ACTIVITY_READ_TIMEOUT_MS = 16000;
 const PROFILE_READ_TIMEOUT_MS = 16000;
+const ROOM_EXISTENCE_TIMEOUT_MS = 3500;
 const PROFILE_VERIFY_ATTEMPTS = 20;
 const PROFILE_VERIFY_DELAY_MS = 1500;
 const ACTIVITY_VERIFY_ATTEMPTS = 10;
@@ -60,7 +61,7 @@ function pendingActivityKey(did: string) {
 }
 
 function pendingProfileKey(did: string) {
-  return `technocore-agent-console.pendingProfile.${did}`;
+  return `technocore-agent-console.pendingProfile.v2.${did}`;
 }
 
 function broadcastPendingActivityChange() {
@@ -167,6 +168,15 @@ async function readRoomMessages(room: string, timeoutMs = DEFAULT_READ_TIMEOUT_M
   return parseRoomMessages(raw);
 }
 
+async function roomHasMessages(room: string): Promise<boolean> {
+  try {
+    const messages = await readRoomMessages(room, ROOM_EXISTENCE_TIMEOUT_MS);
+    return messages.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function didNotePath(fingerprintValue: string): string {
   if (!/^[0-9a-f]{16}$/.test(fingerprintValue)) throw new Error("Invalid DID fingerprint.");
   return `/kv/did-${fingerprintValue.slice(0, 2)}/${fingerprintValue.slice(2)}`;
@@ -222,12 +232,32 @@ async function proxyPostSigned(room: string, did: string, sig: string, nonce: st
   return text;
 }
 
+async function browserSignedGet(room: string, did: string, sig: string, nonce: string, textValue: string): Promise<string> {
+  const signedUrl = `${TECHNOCORE_ORIGIN}/r/${encodeURIComponent(room)}/say-signed/${encodeURIComponent(did)}/${encodeURIComponent(sig)}/${encodeURIComponent(nonce)}/${encodeURIComponent(textValue)}`;
+  await fetch(signedUrl, {
+    method: "GET",
+    mode: "no-cors",
+    cache: "no-store",
+    credentials: "omit",
+    redirect: "follow",
+  });
+  return "browser-dispatched";
+}
+
 async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
   const nonce = Date.now().toString();
   const canonical = `${room}|${nonce}|${body}`;
   const sig = await signText(identity.privateKeyJwk, canonical);
-  return proxyPostSigned(room, identity.did, sig, nonce, body);
+
+  // Existing rooms use the proven server POST path. New rooms must be created from
+  // the user's browser IP so Technocore's per-IP room-creation budget is not shared
+  // by every Vercel user. The response is intentionally opaque; read-back below is
+  // the only source of truth for delivery.
+  if (await roomHasMessages(room)) {
+    return proxyPostSigned(room, identity.did, sig, nonce, body);
+  }
+  return browserSignedGet(room, identity.did, sig, nonce, body);
 }
 
 async function hasExactActivity(identity: StoredIdentity, room: string, body: string, timeoutMs = ACTIVITY_READ_TIMEOUT_MS): Promise<boolean> {
@@ -296,8 +326,6 @@ export async function sendSignedMessage(identity: StoredIdentity, room: string, 
     } else if (unresolved.room === targetRoom && unresolved.text === body) {
       throw new Error("ACTIVITY_DELIVERY_PENDING: this exact message is still waiting for read-back");
     } else {
-      // A pending record belongs only to that exact room + message pair.
-      // Rotating mailbox or sending a different message must not lock the identity.
       clearPendingActivity(identity.did);
     }
   }
@@ -483,7 +511,6 @@ export async function publishProfile(identity: StoredIdentity, agentName: string
     }
   } catch {
     // The signed proof room is canonical for ownership verification in this console.
-    // A slow note write must not cause a duplicate signed proof submission.
   }
 
   onStage?.("index-confirmed");
