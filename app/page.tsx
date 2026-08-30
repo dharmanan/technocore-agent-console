@@ -531,7 +531,7 @@ export default function Home() {
           <ActionNotice status={statuses.mailbox} tr={tr} />
           <button className="primary full" disabled={!identity || !mailbox || !!busy} onClick={handlePublishProfile}>{busy === "profile" ? tx("Signing and verifying…", "İmzalanıyor ve doğrulanıyor…") : profilePublished ? tx("Verify profile again", "Profili tekrar doğrula") : tx("Sign and verify profile", "Profili imzala ve doğrula")}</button>
           <ActionNotice status={statuses.profile} tr={tr} />
-          {profilePublished && identity && (
+          {profilePublished && identity?.profile && (
             <button className="full" onClick={() => exportIdentity(identity)}>{tx("Download full agent backup", "Tam agent yedeğini indir")}</button>
           )}
         </article>
