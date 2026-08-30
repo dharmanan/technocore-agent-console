@@ -315,6 +315,10 @@ export default function Home() {
     const next = createMailbox();
     setMailbox(next);
     saveDraftProfile(identity.did, { agentName, mailbox: next });
+    if (profilePublished) {
+      setProfilePublished(false);
+      localStorage.removeItem(`technocore-agent-console.progress.${identity.did}.profile`);
+    }
     setStatus("mailbox", {
       state: "success",
       message: tx("Your message box is ready locally and saved to this DID. Refreshing the page will keep it.", "Mesaj kutun hazır ve bu DID'e bağlı olarak kaydedildi. Sayfayı yenilediğinde kaybolmayacak."),
