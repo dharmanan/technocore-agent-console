@@ -6,3 +6,18 @@
 /* Legacy profile recovery */
 .profileRecoveryBackdrop{position:fixed;inset:0;z-index:1000;background:rgba(2,8,7,.82);display:flex;align-items:center;justify-content:center;padding:24px}.profileRecoveryCard{width:min(760px,100%);max-height:88vh;overflow:auto;border:1px solid #2c7565;background:#08100f;padding:28px;box-shadow:0 24px 80px rgba(0,0,0,.45)}.profileRecoveryCard>.muted{margin:12px 0;line-height:1.6}.profileRecoveryList{display:grid;gap:10px;margin:20px 0}.profileRecoveryOption{display:grid;gap:5px;text-align:left;padding:16px;border:1px solid var(--line);background:#0a1110;color:inherit;cursor:pointer}.profileRecoveryOption:hover{border-color:var(--accent);background:#0b1714}.profileRecoveryOption span,.profileRecoveryOption small{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--accent)}.profileRecoveryOption strong{font-size:19px}.profileRecoveryOption code{overflow-wrap:anywhere;color:#b7cbc5}.profileRecoveryCard .actions{margin-top:18px}.historyList{display:grid;gap:18px;margin:34px 0 80px}.historyList>.panel{padding:28px}.historyList .liveKey{margin:8px 0}.historyList .empty{margin-top:14px}
 @media(max-width:820px){.stepPanel.activeStep{padding-top:66px}.startCue{right:18px;top:13px}.phaseTwoPanel.phaseReady{padding-top:66px}.phaseTwoPanel.phaseReady>.startCue{left:50%;right:auto;top:12px;transform:translateX(-50%)}.footerCenterLinks{top:18px;left:auto;right:104px;transform:none}.liveActivityLink,.messagesLink,.historyLink{padding:7px 9px;font-size:0}.liveActivityLink:after{content:"LIVE";font-size:9px;letter-spacing:.12em}.messagesLink:after{content:"MSG";font-size:9px;letter-spacing:.12em}.historyLink:after{content:"HIST";font-size:9px;letter-spacing:.12em}.messagesGrid{grid-template-columns:1fr}.messagesHero h1{font-size:48px}.profileRecoveryBackdrop{padding:12px}.profileRecoveryCard{padding:20px}}
+
+/* Live Activity UX pass: per-message context, de-emphasized seq, copy actions, active profile block */
+.liveMessageContext{display:flex;flex-wrap:wrap;gap:5px 14px;margin-top:9px;padding-top:9px;border-top:1px dashed #182326}
+.liveMessageContext span{font-size:9px;color:#5d7074;letter-spacing:.02em}
+.liveMessageContext code{margin-left:5px;font-family:monospace;color:#8a9ea1;overflow-wrap:anywhere}
+.liveMessageSeq{font:400 9px monospace;color:#5d7074}
+.liveActiveProfile{padding:14px 0;border-top:1px solid #182326;display:grid;gap:4px}
+.liveActiveProfile small{font-size:8px;letter-spacing:.14em;color:var(--accent)}
+.liveActiveProfile strong{font-size:16px}
+.liveKeyRow{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.liveKeyRow code{overflow-wrap:anywhere;flex:1}
+.liveCopyBtn{flex-shrink:0;padding:4px 8px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;background:#11191c;border:1px solid var(--line);color:var(--muted);cursor:pointer}
+.liveCopyBtn:hover{border-color:var(--accent);color:var(--accent)}
+.liveCopyBtn.copied{border-color:var(--accent);color:var(--accent)}
+@media(max-width:620px){.liveKeyRow{flex-wrap:wrap}.liveMessageContext{gap:4px 10px}}
