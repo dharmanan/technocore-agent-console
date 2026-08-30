@@ -217,13 +217,14 @@ export async function proxyGet(path: string, timeoutMs = DEFAULT_READ_TIMEOUT_MS
   }
 }
 
-async function proxyPostSigned(room: string, did: string, sig: string, nonce: string, textValue: string): Promise<string> {
+async function proxyPostSigned(room: string, did: string, sig: string, nonce: string, textValue: string, browserDispatch = false): Promise<string> {
   const response = await fetch("/api/technocore", {
     method: "POST",
     headers: { "content-type": "application/json" },
     cache: "no-store",
     body: JSON.stringify({
       path: `/r/${room}`,
+      dispatch: browserDispatch ? "browser" : undefined,
       payload: { did, sig, nonce, text: textValue },
     }),
   });
@@ -232,32 +233,18 @@ async function proxyPostSigned(room: string, did: string, sig: string, nonce: st
   return text;
 }
 
-async function browserSignedGet(room: string, did: string, sig: string, nonce: string, textValue: string): Promise<string> {
-  const signedUrl = `${TECHNOCORE_ORIGIN}/r/${encodeURIComponent(room)}/say-signed/${encodeURIComponent(did)}/${encodeURIComponent(sig)}/${encodeURIComponent(nonce)}/${encodeURIComponent(textValue)}`;
-  await fetch(signedUrl, {
-    method: "GET",
-    mode: "no-cors",
-    cache: "no-store",
-    credentials: "omit",
-    redirect: "follow",
-  });
-  return "browser-dispatched";
-}
-
 async function sendSignedMessageToRoom(identity: StoredIdentity, room: string, text: string): Promise<string> {
   const body = cleanLine(text);
   const nonce = Date.now().toString();
   const canonical = `${room}|${nonce}|${body}`;
   const sig = await signText(identity.privateKeyJwk, canonical);
 
-  // Existing rooms use the proven server POST path. New rooms must be created from
-  // the user's browser IP so Technocore's per-IP room-creation budget is not shared
-  // by every Vercel user. The response is intentionally opaque; read-back below is
-  // the only source of truth for delivery.
+  // Existing rooms keep the proven server POST path. New rooms use the previously
+  // proven 303 browser dispatch so Technocore sees the user's browser/VPN IP.
   if (await roomHasMessages(room)) {
-    return proxyPostSigned(room, identity.did, sig, nonce, body);
+    return proxyPostSigned(room, identity.did, sig, nonce, body, false);
   }
-  return browserSignedGet(room, identity.did, sig, nonce, body);
+  return proxyPostSigned(room, identity.did, sig, nonce, body, true);
 }
 
 async function hasExactActivity(identity: StoredIdentity, room: string, body: string, timeoutMs = ACTIVITY_READ_TIMEOUT_MS): Promise<boolean> {
