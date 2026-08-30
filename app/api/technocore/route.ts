@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
 
   const value = input as {
     path?: unknown;
+    dispatch?: unknown;
     payload?: { did?: unknown; sig?: unknown; nonce?: unknown; text?: unknown };
   };
   const path = typeof value.path === "string" ? value.path : "";
@@ -95,6 +96,28 @@ export async function POST(request: NextRequest) {
     typeof payload.text !== "string"
   ) {
     return new NextResponse("Invalid signed message payload.", { status: 400 });
+  }
+
+  if (value.dispatch === "browser") {
+    if (!/^did:key:z[1-9A-HJ-NP-Za-km-z]+$/.test(payload.did)) {
+      return new NextResponse("Invalid did:key value.", { status: 400 });
+    }
+    if (!/^[A-Za-z0-9_-]{80,100}$/.test(payload.sig)) {
+      return new NextResponse("Invalid signature value.", { status: 400 });
+    }
+    if (!/^\d{1,19}$/.test(payload.nonce)) {
+      return new NextResponse("Invalid nonce value.", { status: 400 });
+    }
+    if (!payload.text.trim() || payload.text.length > 4096) {
+      return new NextResponse("Invalid message text.", { status: 400 });
+    }
+
+    const room = path.slice(3);
+    const signedUrl = new URL(
+      `/r/${encodeURIComponent(room)}/say-signed/${encodeURIComponent(payload.did)}/${encodeURIComponent(payload.sig)}/${encodeURIComponent(payload.nonce)}/${encodeURIComponent(payload.text)}`,
+      ORIGIN,
+    );
+    return NextResponse.redirect(signedUrl, 303);
   }
 
   const controller = new AbortController();
